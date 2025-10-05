@@ -33,13 +33,13 @@ Turn simple depth maps or existing renders into photorealistic images using Goog
 ## 📸 Screenshots
 
 ### Interface
-*[PLACEHOLDER: Main UI screenshot]*
-
 ![Main Interface](docs/images/ui_main.png)
 
-### Render History
-*[PLACEHOLDER: History panel screenshot]*
+### Styles
+![Styles](docs/images/ui_styles.png)
 
+
+### Render History
 ![Render History](docs/images/ui_gallery.png)
 
 ---
@@ -50,43 +50,43 @@ Turn simple depth maps or existing renders into photorealistic images using Goog
 
 | Depth Map | Style Reference | AI Result |
 |-----------|----------------|-----------|
-| *[depth_1.png]* | *[style_1.png]* | *[result_1.png]* |
+| *docs/images/depth_1.png* | *docs/images/style_1.png* | *docs/images/result_1.png* |
 
 | Depth Map | Style Reference | AI Result |
 |-----------|----------------|-----------|
-| *[depth_2.png]* | *[style_2.png]* | *[result_2.png]* |
+| *docs/images/depth_2.png* | *docs/images/style_2.png* | *docs/images/result_2.png* |
 
 
 ### Depth Map Mode (Without Style Reference)
 
 | Depth Map | AI Result |
 |-----------|-----------|
-| *[depth_1.png]* | *[result_11.png]* |
+| *docs/images/depth_1.png* | *docs/images/result_11.png* |
 
 | Depth Map | AI Result |
 |-----------|-----------|
-| *[depth_2.png]* | *[result_11.png]* |
+| *docs/images/depth_2.png* | *docs/images/result_11.png* |
 
 ### Regular Render Mode (With Style)
 
 | Eevee Render | Style Reference | AI Result |
 |--------------|----------------|-----------|
-| *[eevee_1.png]* | *[style_eevee_1.png]* | *[result_eevee_1.png]* |
+| *docs/images/eevee_1.png* | *docs/images/style_eevee_1.png* | *docs/images/result_eevee_1.png* |
 
 | Eevee Render | Style Reference | AI Result |
 |--------------|----------------|-----------|
-| *[eevee_2.png]* | *[style_eevee_2.png]* | *[result_eevee_2.png]* |
+| *docs/images/eevee_2.png* | *docs/images/style_eevee_2.png* | *docs/images/result_eevee_2.png* |
 
 
 ### Regular Render Mode (Without Style)
 
 | Eevee Render | AI Result |
 |--------------|-----------|
-| *[eevee_1.png]* | *[result_eevee_11.png]* |
+| *docs/images/eevee_1.png* | *docs/images/result_eevee_11.png* |
 
 | Eevee Render | AI Result |
 |--------------|-----------|
-| *[eevee_2.png]* | *[result_eevee_22.png]* |
+| *docs/images/eevee_2.png* | *docs/images/result_eevee_22.png* |
 
 ---
 
