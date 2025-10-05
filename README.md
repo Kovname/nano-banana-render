@@ -33,13 +33,13 @@ Turn simple depth maps or existing renders into photorealistic images using Goog
 ## 📸 Screenshots
 
 ### Interface
-*[PLACEHOLDER: Main UI screenshot]*
-
 ![Main Interface](docs/images/ui_main.png)
 
-### Render History
-*[PLACEHOLDER: History panel screenshot]*
+### Styles
+![Styles](docs/images/ui_styles.png)
 
+
+### Render History
 ![Render History](docs/images/ui_gallery.png)
 
 ---
