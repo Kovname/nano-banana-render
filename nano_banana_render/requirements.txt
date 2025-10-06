@@ -1,0 +1,8 @@
+# Official Google Gemini AI SDK (recommended)
+google-genai>=1.0.0
+
+# PIL for image processing (required)
+Pillow>=9.0.0
+
+# Fallback dependencies (for REST API if SDK not available)
+requests>=2.25.0
