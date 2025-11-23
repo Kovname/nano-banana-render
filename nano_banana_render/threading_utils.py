@@ -535,8 +535,12 @@ class APIThread(threading.Thread):
             # Check for reference image
             reference_path = save_reference_image_temp(self.scene)
             
+            # Get resolution
+            props = self.scene.gemini_render if hasattr(self.scene, 'gemini_render') else None
+            resolution = int(props.resolution) if props and hasattr(props, 'resolution') else 1024
+            
             try:
-                image_data, mime_type = self.api_client.generate_image(self.depth_path, self.user_prompt, reference_path)
+                image_data, mime_type = self.api_client.generate_image(self.depth_path, self.user_prompt, reference_path, width=resolution, height=resolution)
                 print(f"[GEMINI] AI response received, image size: {len(image_data)} bytes")
             finally:
                 # Clean up reference temp file
@@ -702,8 +706,12 @@ class FullRenderThread(threading.Thread):
             # Determine if using color render mode
             is_color_render = (render_mode == 'EEVEE')
             
+            # Get resolution
+            resolution = int(props.resolution) if props and hasattr(props, 'resolution') else 1024
+            print(f"[GEMINI] Using resolution: {resolution}x{resolution}")
+            
             try:
-                image_data, mime_type = self.api_client.generate_image(depth_path, self.user_prompt, reference_path, is_color_render)
+                image_data, mime_type = self.api_client.generate_image(depth_path, self.user_prompt, reference_path, is_color_render, width=resolution, height=resolution)
                 print(f"[GEMINI] AI response received, image size: {len(image_data)} bytes")
             finally:
                 # Clean up reference temp file

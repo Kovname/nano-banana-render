@@ -91,6 +91,18 @@ class GeminiRenderProperties(PropertyGroup):
         update=lambda self, context: on_render_mode_change(self, context)
     )
     
+    # Resolution selection
+    resolution: EnumProperty(
+        name="Resolution",
+        description="Choose render resolution",
+        items=[
+            ('1024', "1k (1024x1024)", "Standard square resolution"),
+            ('2048', "2k (2048x2048)", "High resolution"),
+            ('4096', "4k (4096x4096)", "Ultra high resolution"),
+        ],
+        default='1024',
+    )
+    
     # Mist Pass settings for depth rendering
     mist_start: FloatProperty(
         name="Mist Start",
@@ -173,16 +185,27 @@ class GeminiRenderProperties(PropertyGroup):
 
 class BANANA_PT_render_panel(Panel):
     """Main Nano Banana Render Panel"""
-    bl_label = "Nano Banana"
+    bl_label = "Nano Banana Pro"
     bl_idname = "BANANA_PT_render_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Nano Banana"
+    bl_category = "Nano Banana Pro"
     
     def draw(self, context):
         layout = self.layout
         scene = context.scene
         props = scene.gemini_render
+        
+        # Auto-sync API key from preferences if scene key is empty
+        if not props.api_key:
+            try:
+                # Use __package__ to get the correct addon name
+                package_name = __package__ if __package__ else "nano_banana_render"
+                addon_prefs = context.preferences.addons.get(package_name)
+                if addon_prefs and hasattr(addon_prefs.preferences, 'api_key') and addon_prefs.preferences.api_key:
+                    props.api_key = addon_prefs.preferences.api_key
+            except:
+                pass
         
         # Authentication (collapsible)
         box = layout.box()
@@ -259,6 +282,10 @@ class BANANA_PT_render_panel(Panel):
             box.label(text="Render Mode:", icon='RENDERLAYERS')
             box.prop(props, "render_mode", text="")
             
+            # Resolution selection
+            box.label(text="Resolution:", icon='FULLSCREEN_ENTER')
+            box.prop(props, "resolution", text="")
+            
             # Show mist settings only if depth mode is selected
             if props.render_mode == 'DEPTH':
                 box.separator()
@@ -279,7 +306,7 @@ class BANANA_PT_render_panel(Panel):
                 info_box.scale_y = 0.7
                 info_box.label(text="Regular Render will use:", icon='INFO')
                 info_box.label(text="  • Current scene textures")
-                info_box.label(text="  • Scene lighting & materials")
+                info_box.label(text="  • Current lighting setup")
                 info_box.label(text="  • Scene colors")
                 info_box.label(text="Great for preserving existing look!")
             
@@ -332,7 +359,7 @@ class BANANA_PT_history_panel(Panel):
     bl_idname = "BANANA_PT_history_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = "Nano Banana"
+    bl_category = "Nano Banana Pro"
     bl_parent_id = "BANANA_PT_render_panel"
     
     def draw(self, context):
@@ -484,7 +511,9 @@ def sync_api_key(self, context):
         import bpy
         
         # Get addon preferences
-        addon_prefs = context.preferences.addons.get(__name__.split('.')[0])
+        package_name = __package__ if __package__ else "nano_banana_render"
+        addon_prefs = context.preferences.addons.get(package_name)
+        
         if addon_prefs and hasattr(addon_prefs.preferences, 'api_key'):
             # Sync scene -> preferences
             if self.api_key and self.api_key != addon_prefs.preferences.api_key:
