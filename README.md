@@ -41,17 +41,13 @@ Using Google's latest vision model for:
 
 ## Interface
 
-### The Render Panel
+### The Render Panel & Editor Studio
 
-_Simple, powerful controls for generating your base image._
+|            Render Panel             |             Editor Studio             |
+| :---------------------------------: | :-----------------------------------: |
+| <img src="docs/images/ui_main.png"> | <img src="docs/images/ui_editor.png"> |
 
-![Main Interface](docs/images/ui_main.png)
-
-### The Editor Studio
-
-_A complete post-processing suite with Inpainting and History._
-
-![Editor Interface](docs/images/ui_editor.png)
+_Simple controls for generation, powerful tools for editing._
 
 ---
 
@@ -111,57 +107,57 @@ _Located in Image Editor > N-Panel > Nano Banana Pro Edit_
 
 ### 1. Depth Map Mode
 
-_Turn blockouts into art using Mist Pass_
+Turn blockouts into art using Mist Pass
 
 **With Style Reference**
-_Uses geometry + reference image style_
+Uses geometry + reference image style
 | Depth Input | Style Reference | Result |
 | :---: | :---: | :---: |
-| ![depth](docs/images/depth_input.png) | ![style](docs/images/style_ref.png) | ![result](docs/images/depth_style_result.png) |
+| <img src="docs/images/depth_input.png" width="250"> | <img src="docs/images/style_ref.png" width="250"> | <img src="docs/images/depth_style_result.png" width="250"> |
 
 **Without Style Reference**
-_Uses geometry + text prompt only_
+Uses geometry + text prompt only
 | Depth Input | Text Prompt | Result |
 | :---: | :---: | :---: |
-| ![depth](docs/images/depth_input_2.png) | _"A futuristic sci-fi city, neon lights"_ | ![result](docs/images/depth_prompt_result.png) |
+| <img src="docs/images/depth_input_2.png" width="250"> | "Make it ultra realistic, like a photo taken on an iPhone" | <img src="docs/images/depth_prompt_result.png" width="250"> |
 
 ### 2. Regular Render Mode
 
-_Enhance existing Eevee/Cycles renders_
+Enhance existing Eevee/Cycles renders
 
 **With Style Reference**
-_Transfer style while keeping exact composition_
+Transfer style while keeping exact composition
 | Original Render | Style Reference | Result |
 | :---: | :---: | :---: |
-| ![render](docs/images/reg_render.png) | ![style](docs/images/reg_style.png) | ![result](docs/images/reg_style_result.png) |
+| <img src="docs/images/reg_render.png" width="250"> | <img src="docs/images/reg_style.png" width="250"> | <img src="docs/images/reg_style_result.png" width="250"> |
 
 **Without Style Reference**
-_Change lighting/mood with text_
+Change lighting/mood with text
 | Original Render | Text Prompt | Result |
 | :---: | :---: | :---: |
-| ![render](docs/images/reg_render_2.png) | _"Make it look like a sketch"_ | ![result](docs/images/reg_prompt_result.png) |
+| <img src="docs/images/reg_render_2.png" width="250"> | "Make a sketch on paper with a regular pencil." | <img src="docs/images/reg_prompt_result.png" width="250"> |
 
 ### 3. AI Editor Studio
 
-_Post-processing magic_
+Post-processing magic
 
 **Inpainting (Add Object)**
-_Draw mask + Prompt_
+Draw mask + Prompt
 | Original | Mask | Prompt | Result |
 | :---: | :---: | :---: | :---: |
-| ![orig](docs/images/edit_orig.png) | ![mask](docs/images/edit_mask.png) | _"Add a red car"_ | ![res](docs/images/edit_result.png) |
+| <img src="docs/images/edit_orig.png" width="200"> | <img src="docs/images/edit_mask.png" width="200"> | "Add a red car" | <img src="docs/images/edit_result.png" width="200"> |
 
 **Object Integration**
-_Draw mask + Reference Image + Prompt_
+Draw mask + Reference Image + Prompt
 | Original | Mask | Reference Object | Result |
 | :---: | :---: | :---: | :---: |
-| ![orig](docs/images/int_orig.png) | ![mask](docs/images/int_mask.png) | ![ref](docs/images/int_ref.png) | ![res](docs/images/int_result.png) |
+| <img src="docs/images/edit_result.png" width="200"> | <img src="docs/images/int_mask.png" width="200"> | <img src="docs/images/int_ref.png" width="200"> | <img src="docs/images/int_result.png" width="200"> |
 
 **Full Image Edit**
-_Prompt only (no mask)_
+Prompt only (no mask)
 | Original | Prompt | Result |
 | :---: | :---: | :---: |
-| ![orig](docs/images/full_orig.png) | _"Make it night time, raining"_ | ![res](docs/images/full_result.png) |
+| <img src="docs/images/int_result.png" width="250"> | "Make it night time, raining" | <img src="docs/images/full_result.png" width="250"> |
 
 ---
 
@@ -172,7 +168,7 @@ _Prompt only (no mask)_
 3.  **Install**: In Blender, go to `Edit > Preferences > Add-ons > Install...` and select the zip.
 4.  **Configure**: Paste your API key in the addon preferences.
 
-> **Note**: Google provides a generous free tier for the Gemini API, but you may need to enable billing in Google Cloud Console to access the highest rate limits.
+> **Note**: Google provides a generous free tier for the Gemini API, but you **must enable billing** in Google Cloud Console to access the Gemini 3 Pro model used by this addon.
 
 ---
 
