@@ -8,6 +8,8 @@ Transform your Blender scenes into stunning photorealistic images using the late
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-2.0.0-green.svg)](https://github.com/kovname/nano-banana-render/releases)
 
+[![Support me on Ko-fi](https://storage.ko-fi.com/cdn/kofi3.png)](https://ko-fi.com/kovname)
+
 ---
 
 ## What's New in v2.0
