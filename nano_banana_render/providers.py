@@ -351,7 +351,7 @@ class OpenRouterProvider(BaseProvider):
     
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
-        self.base_url = config.base_url or "https://openrouter.ai/api/v1"
+        self.base_url = config.base_url or "https://openrouter.ai/api/v1/chat/completions"
         self.model_id = config.model_id or "google/gemini-3-pro-image-preview"
     
     def _encode_image_to_data_url(self, image_path: str) -> str:
@@ -397,7 +397,8 @@ class OpenRouterProvider(BaseProvider):
             divisor = gcd(width, height)
             aspect_ratio = f"{width // divisor}:{height // divisor}"
             
-            url = f"{self.base_url}/chat/completions"
+            # Use base_url directly - it should already include /chat/completions
+            url = self.base_url
             headers = {
                 "Authorization": f"Bearer {self.config.api_key}",
                 "Content-Type": "application/json"
@@ -464,7 +465,7 @@ class GPTGodProvider(BaseProvider):
     
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
-        self.base_url = config.base_url or "https://api.gptgod.online/v1"
+        self.base_url = config.base_url or "https://api.gptgod.online/v1/chat/completions"
         
         # Model ID can include resolution suffix (-2k, -4k)
         base_model = config.model_id or "gemini-3-pro-image-preview"
@@ -515,7 +516,8 @@ class GPTGodProvider(BaseProvider):
                 })
                 print("[GPTGOD] Reference image added")
             
-            url = f"{self.base_url}/chat/completions"
+            # Use base_url directly - it should already include /chat/completions
+            url = self.base_url
             headers = {
                 "Authorization": f"Bearer {self.config.api_key}",
                 "Content-Type": "application/json"
@@ -541,57 +543,21 @@ class GPTGodProvider(BaseProvider):
             result = response.json()
             
             # Parse GPTGod response (multiple formats supported)
-            # Try direct images array
-            if 'images' in result:
-                for img_url in result['images']:
-                    if isinstance(img_url, str):
-                        if img_url.startswith('data:image'):
-                            header, base64_data = img_url.split(',', 1)
-                            mime_type = 'image/png'
-                            try:
-                                mime_type = header.split(';')[0].split(':', 1)[1]
-                            except Exception:
-                                pass
-                            raw_bytes = base64.b64decode(base64_data)
-                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
-                            print(f"[GPTGOD] Image from images array (data URL): {len(png_bytes)} bytes")
-                            return png_bytes, 'image/png'
-                        elif img_url.startswith('http://') or img_url.startswith('https://'):
-                            raw_bytes, mime_type = _download_image(img_url)
-                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
-                            print(f"[GPTGOD] Image from images array (URL): {len(png_bytes)} bytes (source {mime_type})")
-                            return png_bytes, 'image/png'
+            # Format 1: direct 'image' field (single URL)
+            if 'image' in result:
+                img_url = result['image']
+                if img_url.startswith('http://') or img_url.startswith('https://'):
+                    raw_bytes, mime_type = _download_image(img_url)
+                    png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                    print(f"[GPTGOD] Image from 'image' field: {len(png_bytes)} bytes")
+                    return png_bytes, 'image/png'
             
-            # Try choices format
-            if 'choices' in result and result['choices']:
-                message_content = result['choices'][0].get('message', {}).get('content', '')
-                
-                # Check if content is array
-                if isinstance(message_content, list):
-                    for part in message_content:
-                        if part.get('type') == 'image_url':
-                            img_url = part.get('image_url', {}).get('url', '')
-                            if img_url.startswith('data:image'):
-                                header, base64_data = img_url.split(',', 1)
-                                mime_type = 'image/png'
-                                try:
-                                    mime_type = header.split(';')[0].split(':', 1)[1]
-                                except Exception:
-                                    pass
-                                raw_bytes = base64.b64decode(base64_data)
-                                png_bytes, _ = _ensure_png(raw_bytes, mime_type)
-                                print(f"[GPTGOD] Image from content array (data URL): {len(png_bytes)} bytes")
-                                return png_bytes, 'image/png'
-                            elif img_url.startswith('http://') or img_url.startswith('https://'):
-                                raw_bytes, mime_type = _download_image(img_url)
-                                png_bytes, _ = _ensure_png(raw_bytes, mime_type)
-                                print(f"[GPTGOD] Image from content array (URL): {len(png_bytes)} bytes (source {mime_type})")
-                                return png_bytes, 'image/png'
-                
-                # Check if content is string with URL
-                if isinstance(message_content, str):
-                    if message_content.startswith('data:image'):
-                        header, base64_data = message_content.split(',', 1)
+            # Format 2: 'images' array
+            if 'images' in result and result['images']:
+                img_url = result['images'][0]
+                if isinstance(img_url, str):
+                    if img_url.startswith('data:image'):
+                        header, base64_data = img_url.split(',', 1)
                         mime_type = 'image/png'
                         try:
                             mime_type = header.split(';')[0].split(':', 1)[1]
@@ -599,12 +565,46 @@ class GPTGodProvider(BaseProvider):
                             pass
                         raw_bytes = base64.b64decode(base64_data)
                         png_bytes, _ = _ensure_png(raw_bytes, mime_type)
-                        print(f"[GPTGOD] Image from content string (data URL): {len(png_bytes)} bytes")
+                        print(f"[GPTGOD] Image from images array (data URL): {len(png_bytes)} bytes")
                         return png_bytes, 'image/png'
-                    elif message_content.startswith('http://') or message_content.startswith('https://'):
-                        raw_bytes, mime_type = _download_image(message_content)
+                    elif img_url.startswith('http://') or img_url.startswith('https://'):
+                        raw_bytes, mime_type = _download_image(img_url)
                         png_bytes, _ = _ensure_png(raw_bytes, mime_type)
-                        print(f"[GPTGOD] Image from content string (URL): {len(png_bytes)} bytes (source {mime_type})")
+                        print(f"[GPTGOD] Image from images array (URL): {len(png_bytes)} bytes")
+                        return png_bytes, 'image/png'
+            
+            # Format 3: 'data' array with 'url'
+            if 'data' in result and result['data'] and isinstance(result['data'], list):
+                if 'url' in result['data'][0]:
+                    img_url = result['data'][0]['url']
+                    if img_url.startswith('http://') or img_url.startswith('https://'):
+                        raw_bytes, mime_type = _download_image(img_url)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(f"[GPTGOD] Image from data array: {len(png_bytes)} bytes")
+                        return png_bytes, 'image/png'
+            
+            # Format 4: choices format with markdown or URL in content
+            if 'choices' in result and result['choices']:
+                message_content = result['choices'][0].get('message', {}).get('content', '')
+                
+                if isinstance(message_content, str):
+                    # Try to extract URL from markdown: ![](url)
+                    import re
+                    match = re.search(r'!\[.*?\]\((https?://[^)]+)\)', message_content)
+                    if match:
+                        img_url = match.group(1)
+                        raw_bytes, mime_type = _download_image(img_url)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(f"[GPTGOD] Image from markdown: {len(png_bytes)} bytes")
+                        return png_bytes, 'image/png'
+                    
+                    # Try to find direct image URL
+                    match = re.search(r'(https?://[^\s]+\.(png|jpg|jpeg|webp|gif))', message_content, re.IGNORECASE)
+                    if match:
+                        img_url = match.group(1)
+                        raw_bytes, mime_type = _download_image(img_url)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(f"[GPTGOD] Image from URL in content: {len(png_bytes)} bytes")
                         return png_bytes, 'image/png'
             
             raise Exception("No image found in GPTGod response")
