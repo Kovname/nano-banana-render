@@ -54,7 +54,7 @@ class GeminiRenderHistoryItem(PropertyGroup):
     """Single render history entry with visual preview"""
 
     prompt: StringProperty(
-        name="Prompt", description="Prompt used for this render", default=""
+        name="Prompt", description="Prompt used for this render", default="", maxlen=4096,
     )
 
     timestamp: StringProperty(
@@ -234,7 +234,7 @@ class GeminiRenderProperties(PropertyGroup):
         name="Prompt",
         description="Describe how you want the depth map to be transformed",
         default="Make this photorealistic with detailed materials and proper lighting",
-        maxlen=1000,
+        maxlen=4096,
     )
 
     # Prompt presets
