@@ -1,4 +1,5 @@
-这是基于 [https://github.com/Kovname/nano-banana-render](https://github.com/Kovname/nano-banana-render) 的修改版本
+这是基于 [https://github.com/Kovname/nano-banana-render](https://github.com/Kovname/nano-banana-render) 的修改版本 ，主要功能说明请查看原作者github
+
 - 添加了多api provider支持。 第三方api provider  [yunwu](https://yunwu.ai/register?aff=VE3i) | [gptgod](https://gptgod.site/#/register?invite_code=5ax35dxlk4bys0j7jnzqypwkc)
   <img width="531" height="393" alt="image" src="https://github.com/user-attachments/assets/abd0cfb0-ace2-4dce-86fd-5aa5709a3fc9" />
 
