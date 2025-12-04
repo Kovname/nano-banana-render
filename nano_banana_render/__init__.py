@@ -1,9 +1,9 @@
 bl_info = {
-    "name": "Nano Banana Pro Render",
+    "name": "Nano Banana Pro Render Fork",
     "blender": (4, 5, 0),
     "category": "Render", 
-    "version": (2, 0, 0),
-    "author": "Kovname",
+    "version": (2, 1, 10),
+    "author": "Kovname","LiuYang"
     "description": "Professional AI rendering and editing suite for Blender. Transform depth maps and edit renders with AI. Supports mask-based editing, style transfer, and iterative refinement.",
     "location": "3D Viewport > N Panel > Nano Banana Pro, Image Editor > N Panel > Nano Banana Pro Edit",
     "doc_url": "https://github.com/kovname/nano-banana-render",
