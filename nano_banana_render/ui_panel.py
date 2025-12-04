@@ -491,7 +491,6 @@ class BANANA_PT_render_panel(Panel):
         # Prompt text area
         # box.label(text="Prompt", icon='PROP_ON')
         col = box.column(align=True)
-        # col.scale_y = 5.0  # Increase height for better readability
         col.prop(props, "prompt", text="")
 
         # Style Reference (always visible - main feature!)
