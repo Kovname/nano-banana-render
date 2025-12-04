@@ -181,6 +181,8 @@ core_classes = (
     operators.GEMINI_OT_save_prompt_preset,
     operators.GEMINI_OT_rename_prompt_preset,
     operators.GEMINI_OT_delete_prompt_preset,
+    # Utility operators
+    operators.GEMINI_OT_smart_render_ratio,
 )
 
 # Optional debug classes (register separately to avoid conflicts)
