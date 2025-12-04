@@ -1065,13 +1065,37 @@ class GEMINI_OT_test_provider_connection(Operator):
                 try:
                     import requests
                     
-                    # Build test URL based on provider
+                    # Build test URL based on provider (adapted from Krita version)
+                    base_url = config.base_url
+                    
+                    # Remove trailing slash
+                    if base_url.endswith("/"):
+                        base_url = base_url[:-1]
+                    
                     if props.provider_type == 'yunwu':
-                        test_url = f"{config.base_url}/v1beta/models"
+                        # Yunwu uses Gemini-style API: /v1beta/models?key=API_KEY
+                        test_url = f"{base_url}/v1beta/models"
                         params = {'key': config.api_key}
                         headers = {'Content-Type': 'application/json'}
-                    elif props.provider_type in ['openrouter', 'gptgod']:
-                        test_url = f"{config.base_url}/models"
+                    elif props.provider_type == 'gptgod':
+                        # GPTGod uses OpenAI-style: /v1/models with Bearer token
+                        # Replace /chat/completions with /models if present
+                        if "/chat/completions" in base_url:
+                            test_url = base_url.replace("/chat/completions", "/models")
+                        else:
+                            test_url = f"{base_url}/models"
+                        params = None
+                        headers = {
+                            'Authorization': f'Bearer {config.api_key}',
+                            'Content-Type': 'application/json'
+                        }
+                    elif props.provider_type == 'openrouter':
+                        # OpenRouter uses OpenAI-style: /v1/models with Bearer token
+                        # Replace /chat/completions with /models if present
+                        if "/chat/completions" in base_url:
+                            test_url = base_url.replace("/chat/completions", "/models")
+                        else:
+                            test_url = f"{base_url}/models"
                         params = None
                         headers = {
                             'Authorization': f'Bearer {config.api_key}',

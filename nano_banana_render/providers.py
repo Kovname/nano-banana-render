@@ -6,7 +6,7 @@ Supports: Google Gemini, Yunwu.ai, OpenRouter, GPTGod
 import os
 import json
 import base64
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from io import BytesIO
 
 # Try importing PIL
@@ -18,6 +18,139 @@ except ImportError:
 
 # Import requests for REST APIs
 import requests
+
+
+class ProviderManager:
+    """Manage multiple provider configurations with JSON persistence"""
+    
+    def __init__(self):
+        self.config_file = self._get_config_path()
+        self.providers = []
+        self.load()
+    
+    def _get_config_path(self) -> str:
+        """Get configuration file path in user config directory"""
+        try:
+            import bpy
+            # Try Blender 4.5+ extension path
+            try:
+                config_dir = bpy.utils.extension_path_user(__package__.split('.')[0], create=True)
+            except:
+                # Fallback: use addon directory
+                import addon_utils
+                for mod in addon_utils.modules():
+                    if mod.__name__ == __package__.split('.')[0]:
+                        config_dir = os.path.dirname(mod.__file__)
+                        break
+                else:
+                    # Last resort: current file directory
+                    config_dir = os.path.dirname(os.path.realpath(__file__))
+            
+            config_file = os.path.join(config_dir, "providers.json")
+            print(f"[PROVIDER_MANAGER] Config file: {config_file}")
+            return config_file
+        except Exception as e:
+            print(f"[PROVIDER_MANAGER] Error getting config path: {e}")
+            # Fallback to current directory
+            return os.path.join(os.path.dirname(__file__), "providers.json")
+    
+    def load(self):
+        """Load providers from JSON file"""
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    self.providers = json.load(f)
+                print(f"[PROVIDER_MANAGER] Loaded {len(self.providers)} providers from JSON")
+            except Exception as e:
+                print(f"[PROVIDER_MANAGER] Error loading providers: {e}")
+                self.providers = []
+        else:
+            print("[PROVIDER_MANAGER] No config file found - will use default presets")
+            # Don't create JSON yet - wait for user to save something
+            self.providers = []
+    
+
+    def save(self):
+        """Save providers to JSON file"""
+        try:
+            # Ensure directory exists
+            config_dir = os.path.dirname(self.config_file)
+            if not os.path.exists(config_dir):
+                os.makedirs(config_dir)
+            
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                json.dump(self.providers, f, indent=4, ensure_ascii=False)
+            print(f"[PROVIDER_MANAGER] Saved {len(self.providers)} providers to {self.config_file}")
+        except Exception as e:
+            print(f"[PROVIDER_MANAGER] Error saving providers: {e}")
+    
+    def get_provider_by_type(self, provider_type: str) -> Optional[Dict]:
+        """Get provider config by type (google/yunwu/gptgod/openrouter)"""
+        for p in self.providers:
+            if p.get("type") == provider_type:
+                return p
+        # Return None if not found - UI will use default preset
+        return None
+    
+    def get_provider_by_name(self, name: str) -> Optional[Dict]:
+        """Get provider config by name"""
+        for p in self.providers:
+            if p.get("name") == name:
+                return p
+        return None
+    
+    def update_provider(self, provider_type: str, api_key: str, base_url: str = None, model: str = None):
+        """Update provider configuration - creates entry if not exists"""
+        # Find existing provider
+        for p in self.providers:
+            if p.get("type") == provider_type:
+                # Update existing
+                p["apiKey"] = api_key
+                if base_url is not None:
+                    p["baseUrl"] = base_url
+                if model is not None:
+                    p["model"] = model
+                self.save()
+                print(f"[PROVIDER_MANAGER] Updated {provider_type} provider")
+                return True
+        
+        # Create new entry
+        new_provider = {
+            "name": self._get_provider_name(provider_type),
+            "type": provider_type,
+            "apiKey": api_key,
+            "baseUrl": base_url if base_url is not None else "",
+            "model": model if model is not None else ""
+        }
+        self.providers.append(new_provider)
+        self.save()
+        print(f"[PROVIDER_MANAGER] Created new {provider_type} provider entry")
+        return True
+    
+    def _get_provider_name(self, provider_type: str) -> str:
+        """Get display name for provider type"""
+        names = {
+            "google": "Google Gemini",
+            "yunwu": "Yunwu Gemini",
+            "gptgod": "GPTGod",
+            "openrouter": "OpenRouter"
+        }
+        return names.get(provider_type, provider_type)
+    
+    def get_all_provider_types(self) -> List[str]:
+        """Get list of all provider types"""
+        return [p.get("type") for p in self.providers if "type" in p]
+
+
+# Global provider manager instance
+_provider_manager = None
+
+def get_provider_manager() -> ProviderManager:
+    """Get global provider manager instance"""
+    global _provider_manager
+    if _provider_manager is None:
+        _provider_manager = ProviderManager()
+    return _provider_manager
 
 
 class ProviderConfig:

@@ -50,14 +50,20 @@ class GeminiRenderHistoryItem(PropertyGroup):
     )
 
 def on_provider_change(self, context):
-    """Auto-fill provider settings when provider is changed"""
+    """Auto-fill provider settings when provider is changed - from JSON config"""
     try:
         import bpy
+        from . import providers
         
-        # Provider presets
-        presets = {
+        # Set loading flag to prevent save during load
+        self._loading_provider_config = True
+        
+        print(f"\n[UI] ========== Provider Changed to: {self.provider_type} ===========")
+        
+        # Define default presets for each provider
+        default_presets = {
             'google': {
-                'base_url': '',
+                'base_url': 'https://generativelanguage.googleapis.com',
                 'model_id': 'gemini-3-pro-image-preview'
             },
             'yunwu': {
@@ -74,16 +80,56 @@ def on_provider_change(self, context):
             }
         }
         
-        preset = presets.get(self.provider_type)
-        if preset:
-            self.provider_base_url = preset['base_url']
-            self.provider_model_id = preset['model_id']
-            print(f"[GEMINI] Provider preset loaded: {self.provider_type}")
-            print(f"  Base URL: {self.provider_base_url}")
-            print(f"  Model ID: {self.provider_model_id}")
+        # Get provider manager
+        manager = providers.get_provider_manager()
+        
+        # Get saved config for this provider type
+        saved_config = manager.get_provider_by_type(self.provider_type)
+        default_preset = default_presets.get(self.provider_type, {})
+        
+        print(f"[UI] Default preset for {self.provider_type}:")
+        print(f"     URL: {default_preset.get('base_url', 'N/A')}")
+        print(f"     Model: {default_preset.get('model_id', 'N/A')}")
+        
+        if saved_config:
+            print(f"[UI] Found saved config in JSON:")
+            print(f"     API Key: {'***' if saved_config.get('apiKey') else '(empty)'}")
+            print(f"     Base URL: {saved_config.get('baseUrl', '(empty)')}")
+            print(f"     Model: {saved_config.get('model', '(empty)')}")
+            
+            # Load from JSON, but use default if JSON value is empty
+            self.api_key = saved_config.get("apiKey", "")
+            
+            # Use saved base_url if not empty, otherwise use default preset
+            saved_url = saved_config.get("baseUrl", "")
+            self.provider_base_url = saved_url if saved_url else default_preset.get('base_url', '')
+            
+            # Use saved model if not empty, otherwise use default preset
+            saved_model = saved_config.get("model", "")
+            self.provider_model_id = saved_model if saved_model else default_preset.get('model_id', '')
+            
+            print(f"[UI] Final values set:")
+            print(f"     Base URL: {self.provider_base_url}")
+            print(f"     Model ID: {self.provider_model_id}")
+        else:
+            print(f"[UI] No saved config found, using default preset")
+            # Fallback to hardcoded presets if not in JSON
+            self.api_key = ''
+            self.provider_base_url = default_preset.get('base_url', '')
+            self.provider_model_id = default_preset.get('model_id', '')
+            print(f"[UI] Final values set:")
+            print(f"     Base URL: {self.provider_base_url}")
+            print(f"     Model ID: {self.provider_model_id}")
+        
+        print(f"[UI] ========== End Provider Change ==========\n")
         
     except Exception as e:
         print(f"[GEMINI] Error in provider change: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Clear loading flag
+        self._loading_provider_config = False
 
 
 class GeminiRenderProperties(PropertyGroup):
@@ -117,12 +163,14 @@ class GeminiRenderProperties(PropertyGroup):
         name="Base URL",
         description="Custom base URL for API provider (leave empty for default)",
         default="",
+        update=lambda self, context: sync_provider_config(self, context)
     )
     
     provider_model_id: StringProperty(
         name="Model ID",
         description="Model ID for the provider (leave empty for default)",
         default="",
+        update=lambda self, context: sync_provider_config(self, context)
     )
     
     prompt: StringProperty(
@@ -596,11 +644,24 @@ def on_render_mode_change(self, context):
 
 
 def sync_api_key(self, context):
-    """Sync API key between scene properties and addon preferences"""
+    """Sync API key to JSON config file"""
     try:
         import bpy
+        from . import providers
         
-        # Get addon preferences
+        print(f"[UI] Syncing API key for {self.provider_type}...")
+        
+        # Save to JSON
+        manager = providers.get_provider_manager()
+        manager.update_provider(
+            provider_type=self.provider_type,
+            api_key=self.api_key,
+            base_url=self.provider_base_url,
+            model=self.provider_model_id
+        )
+        print(f"[UI] Saved {self.provider_type} config to JSON")
+        
+        # Also sync to addon preferences (legacy support)
         package_name = __package__ if __package__ else "nano_banana_render"
         addon_prefs = context.preferences.addons.get(package_name)
         
@@ -608,11 +669,33 @@ def sync_api_key(self, context):
             # Sync scene -> preferences
             if self.api_key and self.api_key != addon_prefs.preferences.api_key:
                 addon_prefs.preferences.api_key = self.api_key
-                print(f"✅ [GEMINI] API key synced to preferences")
-            # Sync preferences -> scene (if scene is empty)
-            elif not self.api_key and addon_prefs.preferences.api_key:
-                self.api_key = addon_prefs.preferences.api_key
-                print(f"✅ [GEMINI] API key synced from preferences")
         
     except Exception as e:
-        print(f"⚠️ [GEMINI] Failed to sync API key: {e}")
+        print(f"[UI] Failed to sync config: {e}")
+
+
+def sync_provider_config(self, context):
+    """Sync provider URL/Model config to JSON - called when URL or Model is manually changed"""
+    try:
+        from . import providers
+        
+        # Skip if we're in the middle of loading (to avoid saving wrong values during provider switch)
+        if hasattr(self, '_loading_provider_config') and self._loading_provider_config:
+            return
+        
+        print(f"[UI] User edited config for {self.provider_type}...")
+        print(f"     Base URL: {self.provider_base_url}")
+        print(f"     Model ID: {self.provider_model_id}")
+        
+        # Save to JSON
+        manager = providers.get_provider_manager()
+        manager.update_provider(
+            provider_type=self.provider_type,
+            api_key=self.api_key,
+            base_url=self.provider_base_url,
+            model=self.provider_model_id
+        )
+        print(f"[UI] Config saved to JSON")
+        
+    except Exception as e:
+        print(f"[UI] Failed to sync config: {e}")
