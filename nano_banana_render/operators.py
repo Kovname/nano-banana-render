@@ -819,6 +819,34 @@ class GEMINI_OT_open_history_image(Operator):
                                 print(
                                     f"🖼️ [GEMINI] Image Editor now shows: {space.image.name if space.image else 'None'}"
                                 )
+
+                                # 展开 UI 侧边栏以显示 Edit 面板
+                                try:
+                                    for region in area.regions:
+                                        if region.type == "UI":
+                                            # 如果侧边栏宽度很小，说明是收起状态，需要展开
+                                            if region.width <= 1:
+                                                with bpy.context.temp_override(
+                                                    window=new_window,
+                                                    area=area,
+                                                    region=region,
+                                                ):
+                                                    bpy.ops.screen.region_toggle(
+                                                        region_type="UI"
+                                                    )
+                                                print(
+                                                    "🖼️ [GEMINI] UI sidebar expanded for Edit panel"
+                                                )
+                                            else:
+                                                print(
+                                                    "🖼️ [GEMINI] UI sidebar already visible"
+                                                )
+                                            break
+                                except Exception as sidebar_e:
+                                    print(
+                                        f"⚠️ [GEMINI] Could not expand sidebar: {sidebar_e}"
+                                    )
+
                                 self.report({"INFO"}, f"Opened: {duplicate_image.name}")
                                 return {"FINISHED"}
                         break
@@ -841,6 +869,27 @@ class GEMINI_OT_open_history_image(Operator):
                                 print(
                                     f"🖼️ [GEMINI] Image Editor now shows: {space.image.name if space.image else 'None'}"
                                 )
+
+                                # 确保 UI 侧边栏展开
+                                try:
+                                    for region in area.regions:
+                                        if region.type == "UI":
+                                            if region.width <= 1:
+                                                with bpy.context.temp_override(
+                                                    area=area, region=region
+                                                ):
+                                                    bpy.ops.screen.region_toggle(
+                                                        region_type="UI"
+                                                    )
+                                                print(
+                                                    "🖼️ [GEMINI] UI sidebar expanded for Edit panel"
+                                                )
+                                            break
+                                except Exception as sidebar_e:
+                                    print(
+                                        f"⚠️ [GEMINI] Could not expand sidebar: {sidebar_e}"
+                                    )
+
                                 self.report({"INFO"}, f"Opened: {duplicate_image.name}")
                                 return {"FINISHED"}
 
@@ -861,6 +910,27 @@ class GEMINI_OT_open_history_image(Operator):
                                 print(
                                     f"🖼️ [GEMINI] Image Editor now shows: {space.image.name if space.image else 'None'}"
                                 )
+
+                                # 确保 UI 侧边栏展开
+                                try:
+                                    for region in area.regions:
+                                        if region.type == "UI":
+                                            if region.width <= 1:
+                                                with bpy.context.temp_override(
+                                                    area=area, region=region
+                                                ):
+                                                    bpy.ops.screen.region_toggle(
+                                                        region_type="UI"
+                                                    )
+                                                print(
+                                                    "🖼️ [GEMINI] UI sidebar expanded for Edit panel"
+                                                )
+                                            break
+                                except Exception as sidebar_e:
+                                    print(
+                                        f"⚠️ [GEMINI] Could not expand sidebar: {sidebar_e}"
+                                    )
+
                                 self.report({"INFO"}, f"Opened: {duplicate_image.name}")
                                 return {"FINISHED"}
 
