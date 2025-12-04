@@ -359,7 +359,7 @@ class GeminiRenderProperties(PropertyGroup):
     show_auth: BoolProperty(
         name="Show Authentication",
         description="Show authentication panel",
-        default=True,  # Show by default first time
+        default=False,  # Show by default first time
     )
 
     # Status
