@@ -49,6 +49,43 @@ class GeminiRenderHistoryItem(PropertyGroup):
         default=""
     )
 
+def on_provider_change(self, context):
+    """Auto-fill provider settings when provider is changed"""
+    try:
+        import bpy
+        
+        # Provider presets
+        presets = {
+            'google': {
+                'base_url': '',
+                'model_id': 'gemini-3-pro-image-preview'
+            },
+            'yunwu': {
+                'base_url': 'https://yunwu.zeabur.app',
+                'model_id': 'gemini-3-pro-image-preview'
+            },
+            'openrouter': {
+                'base_url': 'https://openrouter.ai/api/v1/chat/completions',
+                'model_id': 'google/gemini-3-pro-image-preview'
+            },
+            'gptgod': {
+                'base_url': 'https://api.gptgod.online/v1/chat/completions',
+                'model_id': 'gemini-3-pro-image-preview'
+            }
+        }
+        
+        preset = presets.get(self.provider_type)
+        if preset:
+            self.provider_base_url = preset['base_url']
+            self.provider_model_id = preset['model_id']
+            print(f"[GEMINI] Provider preset loaded: {self.provider_type}")
+            print(f"  Base URL: {self.provider_base_url}")
+            print(f"  Model ID: {self.provider_model_id}")
+        
+    except Exception as e:
+        print(f"[GEMINI] Error in provider change: {e}")
+
+
 class GeminiRenderProperties(PropertyGroup):
     """Properties for Gemini Render addon stored in scene"""
     
@@ -63,6 +100,7 @@ class GeminiRenderProperties(PropertyGroup):
             ('gptgod', "GPTGod", "GPTGod API"),
         ],
         default='google',
+        update=lambda self, context: on_provider_change(self, context)
     )
     
     # Main properties
@@ -242,43 +280,35 @@ class BANANA_PT_render_panel(Panel):
         
         if props.show_auth:
             # Provider selection dropdown
-            box.label(text="Provider", icon='WORLD')
             box.prop(props, "provider_type", text="")
             
-            box.separator()
-            
-            # API Key input
-            box.label(text="API Key", icon='KEY_HLT')
+            # API Key input with label
+            label_row = box.row()
+            label_row.scale_y = 0.7
+            label_row.label(text="API Key", icon='KEY_HLT')
             box.prop(props, "api_key", text="")
             
             if not props.api_key.strip():
-                box.label(text="⚠ Enter API key", icon='ERROR')
+                warn_row = box.row()
+                warn_row.scale_y = 0.6
+                warn_row.label(text="⚠ Enter API key", icon='ERROR')
             
-            box.separator()
-            
-            # Base URL (optional)
-            box.label(text="Base URL (Optional)", icon='URL')
+            # Base URL with label
+            label_row = box.row()
+            label_row.scale_y = 0.7
+            label_row.label(text="Base URL", icon='URL')
             box.prop(props, "provider_base_url", text="")
-            help_row = box.row()
-            help_row.scale_y = 0.6
-            help_row.label(text="Leave empty for default", icon='INFO')
             
-            box.separator()
-            
-            # Model ID (optional)
-            box.label(text="Model ID (Optional)", icon='PLUGIN')
+            # Model ID with label
+            label_row = box.row()
+            label_row.scale_y = 0.7
+            label_row.label(text="Model ID", icon='PLUGIN')
             box.prop(props, "provider_model_id", text="")
-            help_row = box.row()
-            help_row.scale_y = 0.6
-            help_row.label(text="Leave empty for default", icon='INFO')
-            
-            box.separator()
             
             # Provider management buttons
             btn_row = box.row(align=True)
-            btn_row.scale_y = 1.0
-            # Placeholder for future Add/Save/Del/Test buttons
-            # btn_row.operator("gemini.test_provider_connection", text="Test Connection", icon='PLAY')
+            btn_row.scale_y = 1.2
+            btn_row.operator("gemini.test_provider_connection", text="Test Connection", icon='PLUGIN')
         
         # Prompt
         box = layout.box()

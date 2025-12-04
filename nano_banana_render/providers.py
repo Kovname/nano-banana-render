@@ -53,7 +53,7 @@ class YunwuProvider(BaseProvider):
     
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
-        self.base_url = config.base_url or "https://yunwu.ai"
+        self.base_url = config.base_url or "https://yunwu.zeabur.app"
         self.model_id = config.model_id or "gemini-3-pro-image-preview"
     
     def _encode_image(self, image_path: str) -> str:
@@ -163,12 +163,12 @@ class YunwuProvider(BaseProvider):
 
 
 class OpenRouterProvider(BaseProvider):
-    """OpenRouter provider (OpenAI-compatible API)"""
+    """OpenRouter provider (OpenAI-compatible API)""" 
     
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
         self.base_url = config.base_url or "https://openrouter.ai/api/v1"
-        self.model_id = config.model_id or "google/gemini-2.5-flash-image-preview"
+        self.model_id = config.model_id or "google/gemini-3-pro-image-preview"
     
     def _encode_image_to_data_url(self, image_path: str) -> str:
         """Encode image to data URL"""

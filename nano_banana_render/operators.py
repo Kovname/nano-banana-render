@@ -926,3 +926,297 @@ class GEMINI_OT_load_example_reference(Operator):
             context.window_manager.popup_menu(draw_message, title="Style Reference Examples", icon='IMAGE_DATA')
             self.report({'INFO'}, "Check popup for reference image ideas")
             return {'FINISHED'}
+
+
+class GEMINI_OT_test_provider_connection(Operator):
+    """Test provider connection"""
+    bl_idname = "gemini.test_provider_connection"
+    bl_label = "Test Connection"
+    bl_description = "Test connection to the selected provider"
+    bl_options = {'REGISTER'}
+    
+    def execute(self, context):
+        props = context.scene.gemini_render
+        
+        # Show initial testing status
+        props.status_text = f"Testing {props.provider_type}..."
+        
+        try:
+            # Validate settings
+            if not props.api_key.strip():
+                # Show popup for error
+                def draw_error(self, context):
+                    layout = self.layout
+                    layout.label(text="❌ Test Failed", icon='ERROR')
+                    layout.separator()
+                    layout.label(text="No API key provided")
+                    layout.label(text="Please enter your API key first")
+                
+                context.window_manager.popup_menu(draw_error, title="Connection Test", icon='ERROR')
+                props.status_text = "❌ Test failed: No API key"
+                return {'CANCELLED'}
+            
+            print(f"🔌 [GEMINI] Testing connection to {props.provider_type}...")
+            
+            # Prepare test result messages
+            test_result = {
+                'success': False,
+                'title': '',
+                'messages': []
+            }
+            
+            # Perform REAL connection test based on provider type
+            if props.provider_type == 'google':
+                # For Google, validate API key format AND test connection
+                print("[GEMINI] Testing Google Gemini API...")
+                
+                # First check format
+                if not (props.api_key.startswith('AIza') and len(props.api_key) > 35):
+                    test_result['success'] = False
+                    test_result['title'] = "⚠️ Test Warning"
+                    test_result['messages'] = [
+                        f"Provider: Google Gemini (Official)",
+                        "API key format seems unusual",
+                        "(Google keys typically start with 'AIza')",
+                        "",
+                        "⚠ Key may still work, but format is unexpected"
+                    ]
+                    props.status_text = "⚠️ API key format unusual"
+                else:
+                    # Test actual connection
+                    try:
+                        import requests
+                        test_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={props.api_key}"
+                        print(f"[GEMINI] Testing URL: {test_url[:80]}...")
+                        
+                        response = requests.get(test_url, timeout=10)
+                        
+                        if response.status_code == 200:
+                            test_result['success'] = True
+                            test_result['title'] = "✅ Test Passed"
+                            test_result['messages'] = [
+                                f"Provider: Google Gemini (Official)",
+                                "✓ API key is valid",
+                                "✓ Connection successful",
+                                "",
+                                "Ready to use!"
+                            ]
+                            props.status_text = "✅ Connection successful"
+                            print("✅ [GEMINI] Google API connection successful")
+                        elif response.status_code == 403:
+                            test_result['success'] = False
+                            test_result['title'] = "❌ Test Failed"
+                            test_result['messages'] = [
+                                f"Provider: Google Gemini (Official)",
+                                "❌ API key is invalid or expired",
+                                f"Server returned: {response.status_code}",
+                                "",
+                                "Check your API key in Google AI Studio"
+                            ]
+                            props.status_text = "❌ Invalid API key"
+                            print(f"❌ [GEMINI] API key rejected: {response.status_code}")
+                        else:
+                            test_result['success'] = False
+                            test_result['title'] = "❌ Test Failed"
+                            test_result['messages'] = [
+                                f"Provider: Google Gemini (Official)",
+                                f"Server error: HTTP {response.status_code}",
+                                "",
+                                "Check API status or try again later"
+                            ]
+                            props.status_text = f"❌ Server error: {response.status_code}"
+                            print(f"❌ [GEMINI] Server error: {response.status_code}")
+                    except requests.exceptions.Timeout:
+                        test_result['success'] = False
+                        test_result['title'] = "❌ Test Failed"
+                        test_result['messages'] = [
+                            f"Provider: Google Gemini (Official)",
+                            "❌ Connection timeout",
+                            "",
+                            "Check your internet connection"
+                        ]
+                        props.status_text = "❌ Connection timeout"
+                        print("❌ [GEMINI] Connection timeout")
+                    except requests.exceptions.RequestException as e:
+                        test_result['success'] = False
+                        test_result['title'] = "❌ Test Failed"
+                        test_result['messages'] = [
+                            f"Provider: Google Gemini (Official)",
+                            "❌ Network error",
+                            f"{str(e)[:50]}",
+                            "",
+                            "Check your internet connection"
+                        ]
+                        props.status_text = "❌ Network error"
+                        print(f"❌ [GEMINI] Network error: {e}")
+            else:
+                # For other providers, test actual HTTP connection
+                print(f"[GEMINI] Testing {props.provider_type} connection...")
+                
+                from . import providers
+                config = providers.ProviderConfig(
+                    provider_type=props.provider_type,
+                    api_key=props.api_key,
+                    base_url=props.provider_base_url,
+                    model_id=props.provider_model_id
+                )
+                
+                # Test connection with actual HTTP request
+                try:
+                    import requests
+                    
+                    # Build test URL based on provider
+                    if props.provider_type == 'yunwu':
+                        test_url = f"{config.base_url}/v1beta/models"
+                        params = {'key': config.api_key}
+                        headers = {'Content-Type': 'application/json'}
+                    elif props.provider_type in ['openrouter', 'gptgod']:
+                        test_url = f"{config.base_url}/models"
+                        params = None
+                        headers = {
+                            'Authorization': f'Bearer {config.api_key}',
+                            'Content-Type': 'application/json'
+                        }
+                    else:
+                        raise Exception(f"Unknown provider: {props.provider_type}")
+                    
+                    print(f"[GEMINI] Testing URL: {test_url}")
+                    
+                    # Send test request
+                    response = requests.get(test_url, headers=headers, params=params, timeout=10)
+                    
+                    if response.status_code in [200, 401, 403]:
+                        # 200 = success, 401/403 = API key issue but URL is valid
+                        if response.status_code == 200:
+                            test_result['success'] = True
+                            test_result['title'] = "✅ Test Passed"
+                            test_result['messages'] = [
+                                f"Provider: {props.provider_type}",
+                                f"Base URL: {config.base_url}",
+                                f"Model ID: {config.model_id}",
+                                "",
+                                "✓ Connection successful!",
+                                "✓ API key is valid!",
+                                "",
+                                "Ready to use!"
+                            ]
+                            props.status_text = "✅ Connection successful"
+                            print(f"✅ [GEMINI] {props.provider_type} connection successful")
+                        elif response.status_code == 401:
+                            test_result['success'] = False
+                            test_result['title'] = "❌ Test Failed"
+                            test_result['messages'] = [
+                                f"Provider: {props.provider_type}",
+                                f"Base URL: {config.base_url} ✓",
+                                "",
+                                "❌ API key is invalid",
+                                "",
+                                "URL is correct, but API key is wrong"
+                            ]
+                            props.status_text = "❌ Invalid API key"
+                            print(f"❌ [GEMINI] Invalid API key (401)")
+                        else:  # 403
+                            test_result['success'] = False
+                            test_result['title'] = "❌ Test Failed"
+                            test_result['messages'] = [
+                                f"Provider: {props.provider_type}",
+                                f"Base URL: {config.base_url} ✓",
+                                "",
+                                "❌ Access forbidden (403)",
+                                "",
+                                "Check API key permissions"
+                            ]
+                            props.status_text = "❌ Access forbidden"
+                            print(f"❌ [GEMINI] Access forbidden (403)")
+                    elif response.status_code == 404:
+                        test_result['success'] = False
+                        test_result['title'] = "❌ Test Failed"
+                        test_result['messages'] = [
+                            f"Provider: {props.provider_type}",
+                            f"Base URL: {config.base_url}",
+                            "",
+                            "❌ URL is incorrect (404 Not Found)",
+                            "",
+                            "Check Base URL configuration"
+                        ]
+                        props.status_text = "❌ URL not found (404)"
+                        print(f"❌ [GEMINI] URL not found (404)")
+                    else:
+                        test_result['success'] = False
+                        test_result['title'] = "❌ Test Failed"
+                        test_result['messages'] = [
+                            f"Provider: {props.provider_type}",
+                            f"Server error: HTTP {response.status_code}",
+                            "",
+                            "Check configuration or try again later"
+                        ]
+                        props.status_text = f"❌ Server error: {response.status_code}"
+                        print(f"❌ [GEMINI] Server error: {response.status_code}")
+                        
+                except requests.exceptions.ConnectionError:
+                    test_result['success'] = False
+                    test_result['title'] = "❌ Test Failed"
+                    test_result['messages'] = [
+                        f"Provider: {props.provider_type}",
+                        f"Base URL: {config.base_url}",
+                        "",
+                        "❌ Cannot connect to server",
+                        "",
+                        "Check Base URL or network connection"
+                    ]
+                    props.status_text = "❌ Connection failed"
+                    print("❌ [GEMINI] Connection failed")
+                except requests.exceptions.Timeout:
+                    test_result['success'] = False
+                    test_result['title'] = "❌ Test Failed"
+                    test_result['messages'] = [
+                        f"Provider: {props.provider_type}",
+                        "❌ Connection timeout",
+                        "",
+                        "Server is not responding"
+                    ]
+                    props.status_text = "❌ Connection timeout"
+                    print("❌ [GEMINI] Connection timeout")
+                except Exception as e:
+                    test_result['success'] = False
+                    test_result['title'] = "❌ Test Failed"
+                    error_msg = str(e)[:50]
+                    test_result['messages'] = [
+                        f"Provider: {props.provider_type}",
+                        f"Error: {error_msg}",
+                        "",
+                        "Check your configuration"
+                    ]
+                    props.status_text = f"❌ Error: {error_msg}"
+                    print(f"❌ [GEMINI] Test error: {e}")
+            
+            # Show popup with result AFTER real connection test is complete
+            def draw_result(self, context):
+                layout = self.layout
+                layout.label(text=test_result['title'], icon='INFO' if test_result['success'] else 'ERROR')
+                layout.separator()
+                for msg in test_result['messages']:
+                    if msg:  # Skip empty lines for separator effect
+                        layout.label(text=msg)
+                    else:
+                        layout.separator()
+            
+            icon = 'INFO' if test_result['success'] else 'ERROR'
+            context.window_manager.popup_menu(draw_result, title="Connection Test Result", icon=icon)
+            
+            return {'FINISHED'}
+            
+        except Exception as e:
+            # Show error popup
+            error_msg = str(e)
+            def draw_error(self, context):
+                layout = self.layout
+                layout.label(text="❌ Test Failed", icon='ERROR')
+                layout.separator()
+                layout.label(text="Unexpected error:")
+                layout.label(text=error_msg[:50])  # Truncate long errors
+            
+            context.window_manager.popup_menu(draw_error, title="Connection Test", icon='ERROR')
+            props.status_text = f"❌ Test error: {error_msg[:30]}"
+            print(f"💥 [GEMINI] Connection test failed: {e}")
+            return {'CANCELLED'}

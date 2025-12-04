@@ -97,6 +97,7 @@ core_classes = (
     operators.GEMINI_OT_load_image_as_reference,
     operators.GEMINI_OT_open_api_key_url,
     operators.GEMINI_OT_validate_api_key,
+    operators.GEMINI_OT_test_provider_connection,
 )
 
 # Optional debug classes (register separately to avoid conflicts)
