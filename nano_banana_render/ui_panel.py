@@ -570,15 +570,8 @@ class BANANA_PT_render_panel(Panel):
             box.label(text="Render Mode:", icon="RENDERLAYERS")
             box.prop(props, "render_mode", text="")
 
-            # Resolution selection
-            box.label(text="Resolution:", icon="FULLSCREEN_ENTER")
-            box.prop(props, "resolution", text="")
-
-            # Smart Render Ratio button
-            ratio_row = box.row()
-            ratio_row.operator(
-                "gemini.smart_render_ratio", text="Smart Render Ratio", icon="VIEWZOOM"
-            )
+            # Resolution & Smart Render Ratio moved above the Generate AI Render button
+            # ... existing code ...
 
             # Show mist settings only if depth mode is selected
             if props.render_mode == "DEPTH":
@@ -620,6 +613,11 @@ class BANANA_PT_render_panel(Panel):
 
         # Main render button
         layout.separator()
+        # Resolution and Smart Ratio side-by-side above the render button
+        top_row = layout.row(align=True)
+        top_row.prop(props, "resolution", text="")
+        top_row.operator("gemini.smart_render_ratio", text="Smart Render Ratio", icon="OUTPUT")
+
         col = layout.column(align=True)
         col.scale_y = 2.0  # Make it even bigger!
 
