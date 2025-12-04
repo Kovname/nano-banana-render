@@ -19,6 +19,57 @@ except ImportError:
 # Import requests for REST APIs
 import requests
 
+# --- Unified image handling helpers ---
+from typing import Tuple
+
+def _detect_mime_from_url(url: str) -> str:
+    """Best-effort MIME detection from URL extension"""
+    lower = url.lower()
+    if lower.endswith('.png'):
+        return 'image/png'
+    if lower.endswith('.jpg') or lower.endswith('.jpeg'):
+        return 'image/jpeg'
+    if lower.endswith('.webp'):
+        return 'image/webp'
+    return 'application/octet-stream'
+
+def _download_image(url: str) -> Tuple[bytes, str]:
+    """Download image bytes and return (content, mime_type)"""
+    resp = requests.get(url, timeout=300)
+    if resp.status_code != 200:
+        raise Exception(f"Image download failed {resp.status_code}: {resp.text[:120]}")
+    mime = resp.headers.get('Content-Type', '')
+    if not mime:
+        mime = _detect_mime_from_url(url)
+    # Strip any parameters (e.g., charset)
+    mime = mime.split(';')[0].strip() if mime else 'application/octet-stream'
+    return resp.content, mime
+
+def _ensure_png(image_bytes: bytes, mime_type: str) -> Tuple[bytes, str]:
+    """Convert arbitrary image bytes (jpeg/webp/png) to PNG bytes if PIL is available.
+    Returns (png_bytes, 'image/png'). If PIL is unavailable and input is already PNG, returns as-is.
+    """
+    try:
+        if PIL_AVAILABLE:
+            bio = BytesIO(image_bytes)
+            img = Image.open(bio)
+            # Prefer RGBA to preserve alpha if present
+            if img.mode not in ('RGB', 'RGBA'):
+                img = img.convert('RGB')
+            out = BytesIO()
+            img.save(out, format='PNG')
+            return out.getvalue(), 'image/png'
+        else:
+            # If no PIL, but bytes already are a PNG, keep them
+            png_sig = b"\x89PNG\r\n\x1a\n"
+            if image_bytes.startswith(png_sig):
+                return image_bytes, 'image/png'
+            # Fallback: return original bytes; downstream uses PNG filename but most loaders use magic signatures
+            return image_bytes, mime_type or 'application/octet-stream'
+    except Exception:
+        # On any conversion error, return original bytes
+        return image_bytes, mime_type or 'application/octet-stream'
+
 
 class ProviderManager:
     """Manage multiple provider configurations with JSON persistence"""
@@ -384,11 +435,23 @@ class OpenRouterProvider(BaseProvider):
                     for img in message['images']:
                         image_url = img.get('image_url', {}).get('url', '')
                         if image_url.startswith('data:image'):
-                            # Extract base64 data
-                            base64_data = image_url.split(',')[1]
-                            image_data = base64.b64decode(base64_data)
-                            print(f"[OPENROUTER] Image received: {len(image_data)} bytes")
-                            return image_data, "image/png"
+                            # Parse MIME and base64 data
+                            header, base64_data = image_url.split(',', 1)
+                            # header example: data:image/webp;base64
+                            mime_type = 'image/png'
+                            try:
+                                mime_type = header.split(';')[0].split(':', 1)[1]
+                            except Exception:
+                                pass
+                            raw_bytes = base64.b64decode(base64_data)
+                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                            print(f"[OPENROUTER] Image received (data URL): {len(png_bytes)} bytes")
+                            return png_bytes, 'image/png'
+                        elif image_url.startswith('http://') or image_url.startswith('https://'):
+                            raw_bytes, mime_type = _download_image(image_url)
+                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                            print(f"[OPENROUTER] Image downloaded: {len(png_bytes)} bytes (source {mime_type})")
+                            return png_bytes, 'image/png'
             
             raise Exception("No image found in OpenRouter response")
             
@@ -481,11 +544,23 @@ class GPTGodProvider(BaseProvider):
             # Try direct images array
             if 'images' in result:
                 for img_url in result['images']:
-                    if img_url.startswith('data:image'):
-                        base64_data = img_url.split(',')[1]
-                        image_data = base64.b64decode(base64_data)
-                        print(f"[GPTGOD] Image from images array: {len(image_data)} bytes")
-                        return image_data, "image/png"
+                    if isinstance(img_url, str):
+                        if img_url.startswith('data:image'):
+                            header, base64_data = img_url.split(',', 1)
+                            mime_type = 'image/png'
+                            try:
+                                mime_type = header.split(';')[0].split(':', 1)[1]
+                            except Exception:
+                                pass
+                            raw_bytes = base64.b64decode(base64_data)
+                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                            print(f"[GPTGOD] Image from images array (data URL): {len(png_bytes)} bytes")
+                            return png_bytes, 'image/png'
+                        elif img_url.startswith('http://') or img_url.startswith('https://'):
+                            raw_bytes, mime_type = _download_image(img_url)
+                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                            print(f"[GPTGOD] Image from images array (URL): {len(png_bytes)} bytes (source {mime_type})")
+                            return png_bytes, 'image/png'
             
             # Try choices format
             if 'choices' in result and result['choices']:
@@ -497,18 +572,40 @@ class GPTGodProvider(BaseProvider):
                         if part.get('type') == 'image_url':
                             img_url = part.get('image_url', {}).get('url', '')
                             if img_url.startswith('data:image'):
-                                base64_data = img_url.split(',')[1]
-                                image_data = base64.b64decode(base64_data)
-                                print(f"[GPTGOD] Image from content array: {len(image_data)} bytes")
-                                return image_data, "image/png"
+                                header, base64_data = img_url.split(',', 1)
+                                mime_type = 'image/png'
+                                try:
+                                    mime_type = header.split(';')[0].split(':', 1)[1]
+                                except Exception:
+                                    pass
+                                raw_bytes = base64.b64decode(base64_data)
+                                png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                                print(f"[GPTGOD] Image from content array (data URL): {len(png_bytes)} bytes")
+                                return png_bytes, 'image/png'
+                            elif img_url.startswith('http://') or img_url.startswith('https://'):
+                                raw_bytes, mime_type = _download_image(img_url)
+                                png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                                print(f"[GPTGOD] Image from content array (URL): {len(png_bytes)} bytes (source {mime_type})")
+                                return png_bytes, 'image/png'
                 
                 # Check if content is string with URL
                 if isinstance(message_content, str):
                     if message_content.startswith('data:image'):
-                        base64_data = message_content.split(',')[1]
-                        image_data = base64.b64decode(base64_data)
-                        print(f"[GPTGOD] Image from content string: {len(image_data)} bytes")
-                        return image_data, "image/png"
+                        header, base64_data = message_content.split(',', 1)
+                        mime_type = 'image/png'
+                        try:
+                            mime_type = header.split(';')[0].split(':', 1)[1]
+                        except Exception:
+                            pass
+                        raw_bytes = base64.b64decode(base64_data)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(f"[GPTGOD] Image from content string (data URL): {len(png_bytes)} bytes")
+                        return png_bytes, 'image/png'
+                    elif message_content.startswith('http://') or message_content.startswith('https://'):
+                        raw_bytes, mime_type = _download_image(message_content)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(f"[GPTGOD] Image from content string (URL): {len(png_bytes)} bytes (source {mime_type})")
+                        return png_bytes, 'image/png'
             
             raise Exception("No image found in GPTGod response")
             

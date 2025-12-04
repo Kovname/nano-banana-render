@@ -163,14 +163,14 @@ class GeminiRenderProperties(PropertyGroup):
         name="Base URL",
         description="Custom base URL for API provider (leave empty for default)",
         default="",
-        update=lambda self, context: sync_provider_config(self, context)
+        update=lambda self, context: sync_provider_base_url(self, context)
     )
     
     provider_model_id: StringProperty(
         name="Model ID",
         description="Model ID for the provider (leave empty for default)",
         default="",
-        update=lambda self, context: sync_provider_config(self, context)
+        update=lambda self, context: sync_provider_model_id(self, context)
     )
     
     prompt: StringProperty(
@@ -644,22 +644,26 @@ def on_render_mode_change(self, context):
 
 
 def sync_api_key(self, context):
-    """Sync API key to JSON config file"""
+    """Sync API key to JSON config file (user-only edit)"""
     try:
         import bpy
         from . import providers
         
+        # Skip during provider preset loading to avoid accidental saves
+        if hasattr(self, '_loading_provider_config') and self._loading_provider_config:
+            return
+        
         print(f"[UI] Syncing API key for {self.provider_type}...")
         
-        # Save to JSON
+        # Save only API key; do not modify URL/Model here
         manager = providers.get_provider_manager()
         manager.update_provider(
             provider_type=self.provider_type,
             api_key=self.api_key,
-            base_url=self.provider_base_url,
-            model=self.provider_model_id
+            base_url=None,
+            model=None
         )
-        print(f"[UI] Saved {self.provider_type} config to JSON")
+        print(f"[UI] Saved API key for {self.provider_type} to JSON")
         
         # Also sync to addon preferences (legacy support)
         package_name = __package__ if __package__ else "nano_banana_render"
@@ -674,8 +678,8 @@ def sync_api_key(self, context):
         print(f"[UI] Failed to sync config: {e}")
 
 
-def sync_provider_config(self, context):
-    """Sync provider URL/Model config to JSON - called when URL or Model is manually changed"""
+def sync_provider_base_url(self, context):
+    """Sync provider Base URL to JSON - called when Base URL is manually changed"""
     try:
         from . import providers
         
@@ -683,19 +687,44 @@ def sync_provider_config(self, context):
         if hasattr(self, '_loading_provider_config') and self._loading_provider_config:
             return
         
-        print(f"[UI] User edited config for {self.provider_type}...")
+        print(f"[UI] User edited Base URL for {self.provider_type}...")
         print(f"     Base URL: {self.provider_base_url}")
-        print(f"     Model ID: {self.provider_model_id}")
         
-        # Save to JSON
+        # Save only Base URL
         manager = providers.get_provider_manager()
         manager.update_provider(
             provider_type=self.provider_type,
             api_key=self.api_key,
             base_url=self.provider_base_url,
-            model=self.provider_model_id
+            model=None
         )
-        print(f"[UI] Config saved to JSON")
+        print(f"[UI] Base URL saved to JSON")
         
     except Exception as e:
-        print(f"[UI] Failed to sync config: {e}")
+        print(f"[UI] Failed to sync Base URL: {e}")
+
+
+def sync_provider_model_id(self, context):
+    """Sync provider Model ID to JSON - called when Model ID is manually changed"""
+    try:
+        from . import providers
+        
+        # Skip if we're in the middle of loading (to avoid saving wrong values during provider switch)
+        if hasattr(self, '_loading_provider_config') and self._loading_provider_config:
+            return
+        
+        print(f"[UI] User edited Model ID for {self.provider_type}...")
+        print(f"     Model ID: {self.provider_model_id}")
+        
+        # Save only Model ID
+        manager = providers.get_provider_manager()
+        manager.update_provider(
+            provider_type=self.provider_type,
+            api_key=self.api_key,
+            base_url=None,
+            model=self.provider_model_id
+        )
+        print(f"[UI] Model ID saved to JSON")
+        
+    except Exception as e:
+        print(f"[UI] Failed to sync Model ID: {e}")
