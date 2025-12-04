@@ -432,6 +432,104 @@ class YunwuProvider(BaseProvider):
         except Exception as e:
             raise Exception(f"Yunwu generation failed: {str(e)}")
 
+    def edit_image(
+        self,
+        image_path: str,
+        edit_prompt: str,
+        mask_path: str = None,
+        reference_image_path: str = None,
+        width: int = 0,
+        height: int = 0,
+    ) -> Tuple[bytes, str]:
+        """Edit existing image using Yunwu.ai native Gemini API"""
+        try:
+            print(f"[YUNWU] Editing image with model: {self.model_id}")
+
+            # Encode source image
+            source_base64 = self._encode_image(image_path)
+
+            # Build parts array with edit prompt
+            parts = [{"text": edit_prompt}]
+
+            # Add source image first
+            parts.append(
+                {"inline_data": {"mime_type": "image/png", "data": source_base64}}
+            )
+
+            # Add reference if provided
+            if reference_image_path:
+                ref_base64 = self._encode_image(reference_image_path)
+                parts.append(
+                    {"inline_data": {"mime_type": "image/png", "data": ref_base64}}
+                )
+                print("[YUNWU] Reference image added for edit")
+
+            # Add mask if provided
+            if mask_path:
+                mask_base64 = self._encode_image(mask_path)
+                parts.append(
+                    {"inline_data": {"mime_type": "image/png", "data": mask_base64}}
+                )
+                print("[YUNWU] Mask image added for edit")
+
+            # Build request payload
+            resolution = self._determine_resolution(width, height)
+            aspect_ratio = self._determine_aspect_ratio(width, height)
+
+            url = f"{self.base_url}/v1beta/models/{self.model_id}:generateContent"
+            headers = {"Content-Type": "application/json"}
+
+            payload = {
+                "contents": [{"parts": parts}],
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"],
+                    "imageConfig": {
+                        "aspectRatio": aspect_ratio,
+                        "imageSize": resolution,
+                    },
+                },
+            }
+
+            # Add API key to URL query parameter
+            url = f"{url}?key={self.config.api_key}"
+
+            print(
+                f"[YUNWU] Edit requesting {resolution} resolution, aspect {aspect_ratio}"
+            )
+            response = requests.post(url, headers=headers, json=payload, timeout=300)
+
+            if response.status_code != 200:
+                raise Exception(
+                    f"Yunwu API error {response.status_code}: {response.text}"
+                )
+
+            # Parse response
+            result = response.json()
+
+            # Extract image from response
+            if "candidates" in result and result["candidates"]:
+                parts = result["candidates"][0].get("content", {}).get("parts", [])
+
+                for part in parts:
+                    if "inlineData" in part or "inline_data" in part:
+                        inline_key = (
+                            "inlineData" if "inlineData" in part else "inline_data"
+                        )
+                        inline_data = part[inline_key]
+                        data_key = "data" if "data" in inline_data else "bytes"
+
+                        if data_key in inline_data:
+                            image_data = base64.b64decode(inline_data[data_key])
+                            print(
+                                f"[YUNWU] Edit result received: {len(image_data)} bytes"
+                            )
+                            return image_data, "image/png"
+
+            raise Exception("No image found in Yunwu edit response")
+
+        except Exception as e:
+            raise Exception(f"Yunwu edit failed: {str(e)}")
+
 
 class OpenRouterProvider(BaseProvider):
     """OpenRouter provider (OpenAI-compatible API)"""
@@ -552,6 +650,116 @@ class OpenRouterProvider(BaseProvider):
 
         except Exception as e:
             raise Exception(f"OpenRouter generation failed: {str(e)}")
+
+    def edit_image(
+        self,
+        image_path: str,
+        edit_prompt: str,
+        mask_path: str = None,
+        reference_image_path: str = None,
+        width: int = 0,
+        height: int = 0,
+    ) -> Tuple[bytes, str]:
+        """Edit existing image using OpenRouter API"""
+        try:
+            print(f"[OPENROUTER] Editing with model: {self.model_id}")
+
+            # Build content parts for edit
+            content_parts = [{"type": "text", "text": edit_prompt}]
+
+            # Add source image
+            source_url = self._encode_image_to_data_url(image_path)
+            content_parts.append(
+                {"type": "image_url", "image_url": {"url": source_url}}
+            )
+
+            # Add reference if provided
+            if reference_image_path:
+                ref_url = self._encode_image_to_data_url(reference_image_path)
+                content_parts.append(
+                    {"type": "image_url", "image_url": {"url": ref_url}}
+                )
+                print("[OPENROUTER] Reference image added for edit")
+
+            # Add mask if provided
+            if mask_path:
+                mask_url = self._encode_image_to_data_url(mask_path)
+                content_parts.append(
+                    {"type": "image_url", "image_url": {"url": mask_url}}
+                )
+                print("[OPENROUTER] Mask image added for edit")
+
+            # Determine resolution and aspect ratio
+            resolution = "1K"
+            if width >= 4096 or height >= 4096:
+                resolution = "4K"
+            elif width >= 2048 or height >= 2048:
+                resolution = "2K"
+
+            from . import aspect_ratio_utils
+
+            aspect_ratio = aspect_ratio_utils.find_closest_ratio(width, height)
+
+            url = self.base_url
+            headers = {
+                "Authorization": f"Bearer {self.config.api_key}",
+                "Content-Type": "application/json",
+            }
+
+            payload = {
+                "model": self.model_id,
+                "messages": [{"role": "user", "content": content_parts}],
+                "modalities": ["image", "text"],
+                "image_config": {
+                    "aspect_ratio": aspect_ratio,
+                    "image_size": resolution,
+                },
+            }
+
+            print(f"[OPENROUTER] Edit requesting {resolution}, aspect {aspect_ratio}")
+            response = requests.post(url, headers=headers, json=payload, timeout=300)
+
+            if response.status_code != 200:
+                raise Exception(
+                    f"OpenRouter API error {response.status_code}: {response.text}"
+                )
+
+            result = response.json()
+
+            # Extract image from response (OpenAI format)
+            if "choices" in result and result["choices"]:
+                message = result["choices"][0].get("message", {})
+
+                if "images" in message:
+                    for img in message["images"]:
+                        image_url = img.get("image_url", {}).get("url", "")
+                        if image_url.startswith("data:image"):
+                            header, base64_data = image_url.split(",", 1)
+                            mime_type = "image/png"
+                            try:
+                                mime_type = header.split(";")[0].split(":", 1)[1]
+                            except Exception:
+                                pass
+                            raw_bytes = base64.b64decode(base64_data)
+                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                            print(
+                                f"[OPENROUTER] Edit result (data URL): {len(png_bytes)} bytes"
+                            )
+                            return png_bytes, "image/png"
+                        elif image_url.startswith("http://") or image_url.startswith(
+                            "https://"
+                        ):
+                            raw_bytes, mime_type = _download_image(image_url)
+                            png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                            print(
+                                f"[OPENROUTER] Edit result downloaded: {len(png_bytes)} bytes"
+                            )
+                            return png_bytes, "image/png"
+
+            raise Exception("No image found in OpenRouter edit response")
+
+        except Exception as e:
+            raise Exception(f"OpenRouter edit failed: {str(e)}")
 
 
 class GPTGodProvider(BaseProvider):
@@ -721,6 +929,157 @@ class GPTGodProvider(BaseProvider):
 
         except Exception as e:
             raise Exception(f"GPTGod generation failed: {str(e)}")
+
+    def edit_image(
+        self,
+        image_path: str,
+        edit_prompt: str,
+        mask_path: str = None,
+        reference_image_path: str = None,
+        width: int = 0,
+        height: int = 0,
+    ) -> Tuple[bytes, str]:
+        """Edit existing image using GPTGod API"""
+        try:
+            # Determine model with resolution
+            model_id = self._get_model_for_resolution(width, height)
+            print(f"[GPTGOD] Editing with model: {model_id}")
+
+            # Build prompt for edit
+            full_prompt = f"{edit_prompt}\n请生成 1 张图片。"
+
+            # Build content parts
+            content_parts = [{"type": "text", "text": full_prompt}]
+
+            # Add source image
+            source_url = self._encode_image_to_data_url(image_path)
+            content_parts.append(
+                {"type": "image_url", "image_url": {"url": source_url}}
+            )
+
+            # Add reference if provided
+            if reference_image_path:
+                ref_url = self._encode_image_to_data_url(reference_image_path)
+                content_parts.append(
+                    {"type": "image_url", "image_url": {"url": ref_url}}
+                )
+                print("[GPTGOD] Reference image added for edit")
+
+            # Add mask if provided
+            if mask_path:
+                mask_url = self._encode_image_to_data_url(mask_path)
+                content_parts.append(
+                    {"type": "image_url", "image_url": {"url": mask_url}}
+                )
+                print("[GPTGOD] Mask image added for edit")
+
+            url = self.base_url
+            headers = {
+                "Authorization": f"Bearer {self.config.api_key}",
+                "Content-Type": "application/json",
+            }
+
+            payload = {
+                "model": model_id,
+                "stream": False,
+                "n": 1,
+                "messages": [{"role": "user", "content": content_parts}],
+            }
+
+            print(f"[GPTGOD] Edit requesting with model: {model_id}")
+            response = requests.post(url, headers=headers, json=payload, timeout=300)
+
+            if response.status_code != 200:
+                raise Exception(
+                    f"GPTGod API error {response.status_code}: {response.text}"
+                )
+
+            result = response.json()
+
+            # Parse GPTGod response (multiple formats supported)
+            # Format 1: direct 'image' field
+            if "image" in result:
+                img_url = result["image"]
+                if img_url.startswith("http://") or img_url.startswith("https://"):
+                    raw_bytes, mime_type = _download_image(img_url)
+                    png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                    print(f"[GPTGOD] Edit from 'image' field: {len(png_bytes)} bytes")
+                    return png_bytes, "image/png"
+
+            # Format 2: 'images' array
+            if "images" in result and result["images"]:
+                img_url = result["images"][0]
+                if isinstance(img_url, str):
+                    if img_url.startswith("data:image"):
+                        header, base64_data = img_url.split(",", 1)
+                        mime_type = "image/png"
+                        try:
+                            mime_type = header.split(";")[0].split(":", 1)[1]
+                        except Exception:
+                            pass
+                        raw_bytes = base64.b64decode(base64_data)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(
+                            f"[GPTGOD] Edit from images array (data URL): {len(png_bytes)} bytes"
+                        )
+                        return png_bytes, "image/png"
+                    elif img_url.startswith("http://") or img_url.startswith(
+                        "https://"
+                    ):
+                        raw_bytes, mime_type = _download_image(img_url)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(
+                            f"[GPTGOD] Edit from images array (URL): {len(png_bytes)} bytes"
+                        )
+                        return png_bytes, "image/png"
+
+            # Format 3: 'data' array with 'url'
+            if "data" in result and result["data"] and isinstance(result["data"], list):
+                if "url" in result["data"][0]:
+                    img_url = result["data"][0]["url"]
+                    if img_url.startswith("http://") or img_url.startswith("https://"):
+                        raw_bytes, mime_type = _download_image(img_url)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(f"[GPTGOD] Edit from data array: {len(png_bytes)} bytes")
+                        return png_bytes, "image/png"
+
+            # Format 4: choices format with markdown or URL in content
+            if "choices" in result and result["choices"]:
+                message_content = (
+                    result["choices"][0].get("message", {}).get("content", "")
+                )
+
+                if isinstance(message_content, str):
+                    import re
+
+                    # Try markdown image
+                    match = re.search(r"!\[.*?\]\((https?://[^)]+)\)", message_content)
+                    if match:
+                        img_url = match.group(1)
+                        raw_bytes, mime_type = _download_image(img_url)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(f"[GPTGOD] Edit from markdown: {len(png_bytes)} bytes")
+                        return png_bytes, "image/png"
+
+                    # Try direct image URL
+                    match = re.search(
+                        r"(https?://[^\s]+\.(png|jpg|jpeg|webp|gif))",
+                        message_content,
+                        re.IGNORECASE,
+                    )
+                    if match:
+                        img_url = match.group(1)
+                        raw_bytes, mime_type = _download_image(img_url)
+                        png_bytes, _ = _ensure_png(raw_bytes, mime_type)
+                        print(
+                            f"[GPTGOD] Edit from URL in content: {len(png_bytes)} bytes"
+                        )
+                        return png_bytes, "image/png"
+
+            raise Exception("No image found in GPTGod edit response")
+
+        except Exception as e:
+            raise Exception(f"GPTGod edit failed: {str(e)}")
 
 
 class ProviderFactory:
