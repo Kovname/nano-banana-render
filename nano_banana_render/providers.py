@@ -76,6 +76,7 @@ class ProviderManager:
     
     def __init__(self):
         self.config_file = self._get_config_path()
+        self.settings_file = self._get_settings_path()
         self.providers = []
         self.load()
     
@@ -105,6 +106,27 @@ class ProviderManager:
             # Fallback to current directory
             return os.path.join(os.path.dirname(__file__), "providers.json")
     
+    def _get_settings_path(self) -> str:
+        """Get settings.json path to persist selected provider"""
+        try:
+            import bpy
+            try:
+                config_dir = bpy.utils.extension_path_user(__package__.split('.')[0], create=True)
+            except:
+                import addon_utils
+                for mod in addon_utils.modules():
+                    if mod.__name__ == __package__.split('.')[0]:
+                        config_dir = os.path.dirname(mod.__file__)
+                        break
+                else:
+                    config_dir = os.path.dirname(os.path.realpath(__file__))
+            settings_file = os.path.join(config_dir, "settings.json")
+            print(f"[PROVIDER_MANAGER] Settings file: {settings_file}")
+            return settings_file
+        except Exception as e:
+            print(f"[PROVIDER_MANAGER] Error getting settings path: {e}")
+            return os.path.join(os.path.dirname(__file__), "settings.json")
+
     def load(self):
         """Load providers from JSON file"""
         if os.path.exists(self.config_file):
@@ -135,6 +157,31 @@ class ProviderManager:
         except Exception as e:
             print(f"[PROVIDER_MANAGER] Error saving providers: {e}")
     
+    def load_selected_provider(self) -> Optional[str]:
+        """Load last selected provider type from settings.json"""
+        try:
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    sel = data.get("selected_provider", "")
+                    return sel if isinstance(sel, str) else None
+        except Exception as e:
+            print(f"[PROVIDER_MANAGER] Error loading selected provider: {e}")
+        return None
+
+    def save_selected_provider(self, provider_type: str) -> None:
+        """Persist last selected provider type to settings.json"""
+        try:
+            # Ensure directory exists
+            settings_dir = os.path.dirname(self.settings_file)
+            if not os.path.exists(settings_dir):
+                os.makedirs(settings_dir)
+            with open(self.settings_file, "w", encoding="utf-8") as f:
+                json.dump({"selected_provider": provider_type}, f, indent=4, ensure_ascii=False)
+            print(f"[PROVIDER_MANAGER] Saved selected provider: {provider_type}")
+        except Exception as e:
+            print(f"[PROVIDER_MANAGER] Error saving selected provider: {e}")
+
     def get_provider_by_type(self, provider_type: str) -> Optional[Dict]:
         """Get provider config by type (google/yunwu/gptgod/openrouter)"""
         for p in self.providers:

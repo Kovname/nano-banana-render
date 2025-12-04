@@ -2,6 +2,9 @@ import bpy
 from bpy.types import PropertyGroup, Panel
 from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty, IntProperty, CollectionProperty, PointerProperty
 
+# Module-level init flag to avoid writing to ID data during draw
+_provider_init_done = False
+
 
 def get_preset_items(self, context):
     """Dynamically get preset items from preset manager"""
@@ -156,6 +159,11 @@ def on_provider_change(self, context):
             print(f"     Base URL: {self.provider_base_url}")
             print(f"     Model ID: {self.provider_model_id}")
         
+        # Persist selected provider
+        try:
+            manager.save_selected_provider(self.provider_type)
+        except Exception as e:
+            print(f"[UI] Failed to save selected provider: {e}")
         print(f"[UI] ========== End Provider Change ==========\n")
         
     except Exception as e:
