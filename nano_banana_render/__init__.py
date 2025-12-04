@@ -33,6 +33,8 @@ if "bpy" in locals():
         importlib.reload(image_editor)
     if "image_edit_thread" in locals():
         importlib.reload(image_edit_thread)
+    if "prompt_presets" in locals():
+        importlib.reload(prompt_presets)
 
 # Import our modules
 from . import ui_panel
@@ -43,6 +45,7 @@ from . import providers
 from . import threading_utils
 from . import image_editor
 from . import image_edit_thread
+from . import prompt_presets
 
 class NanoBananaPreferences(AddonPreferences):
     bl_idname = __name__
@@ -98,6 +101,11 @@ core_classes = (
     operators.GEMINI_OT_open_api_key_url,
     operators.GEMINI_OT_validate_api_key,
     operators.GEMINI_OT_test_provider_connection,
+    # Prompt preset operators
+    operators.GEMINI_OT_add_prompt_preset,
+    operators.GEMINI_OT_save_prompt_preset,
+    operators.GEMINI_OT_rename_prompt_preset,
+    operators.GEMINI_OT_delete_prompt_preset,
 )
 
 # Optional debug classes (register separately to avoid conflicts)

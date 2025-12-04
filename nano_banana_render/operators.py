@@ -8,6 +8,7 @@ from . import gemini_api
 from . import depth_utils
 from . import threading_utils
 from . import providers
+from . import prompt_presets
 
 class GEMINI_OT_ai_render(Operator):
     """AI Render operator - main functionality"""
@@ -1244,3 +1245,174 @@ class GEMINI_OT_test_provider_connection(Operator):
             props.status_text = f"❌ Test error: {error_msg[:30]}"
             print(f"💥 [GEMINI] Connection test failed: {e}")
             return {'CANCELLED'}
+
+
+# ========== Prompt Preset Operators ==========
+
+class GEMINI_OT_add_prompt_preset(Operator):
+    """Add new prompt preset"""
+    bl_idname = "gemini.add_prompt_preset"
+    bl_label = "Add Preset"
+    bl_description = "Add current prompt as a new preset"
+    bl_options = {'REGISTER'}
+    
+    preset_name: StringProperty(
+        name="Preset Name",
+        description="Name for the new preset",
+        default="New Preset"
+    )
+    
+    def execute(self, context):
+        try:
+            props = context.scene.gemini_render
+            
+            # Check if prompt is not empty
+            if not props.prompt.strip():
+                self.report({'ERROR'}, "Prompt is empty")
+                return {'CANCELLED'}
+            
+            # Check if name is valid
+            if not self.preset_name.strip():
+                self.report({'ERROR'}, "Preset name cannot be empty")
+                return {'CANCELLED'}
+            
+            # Add preset
+            manager = prompt_presets.get_preset_manager()
+            if manager.add_preset(self.preset_name.strip(), props.prompt):
+                self.report({'INFO'}, f"Preset '{self.preset_name}' added")
+                # Refresh preset list in UI
+                props.prompt_preset = self.preset_name.strip()
+                return {'FINISHED'}
+            else:
+                self.report({'ERROR'}, f"Preset '{self.preset_name}' already exists")
+                return {'CANCELLED'}
+                
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to add preset: {str(e)}")
+            return {'CANCELLED'}
+    
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self)
+
+
+class GEMINI_OT_save_prompt_preset(Operator):
+    """Save changes to current preset"""
+    bl_idname = "gemini.save_prompt_preset"
+    bl_label = "Save Preset"
+    bl_description = "Save current prompt to the selected preset"
+    bl_options = {'REGISTER'}
+    
+    def execute(self, context):
+        try:
+            props = context.scene.gemini_render
+            
+            # Check if a preset is selected
+            if not props.prompt_preset or props.prompt_preset == "NONE":
+                self.report({'ERROR'}, "No preset selected")
+                return {'CANCELLED'}
+            
+            # Check if prompt is not empty
+            if not props.prompt.strip():
+                self.report({'ERROR'}, "Prompt is empty")
+                return {'CANCELLED'}
+            
+            # Update preset
+            manager = prompt_presets.get_preset_manager()
+            if manager.update_preset(props.prompt_preset, new_prompt=props.prompt):
+                self.report({'INFO'}, f"Preset '{props.prompt_preset}' saved")
+                return {'FINISHED'}
+            else:
+                self.report({'ERROR'}, f"Preset '{props.prompt_preset}' not found")
+                return {'CANCELLED'}
+                
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to save preset: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GEMINI_OT_rename_prompt_preset(Operator):
+    """Rename current preset"""
+    bl_idname = "gemini.rename_prompt_preset"
+    bl_label = "Rename Preset"
+    bl_description = "Rename the selected preset"
+    bl_options = {'REGISTER'}
+    
+    new_name: StringProperty(
+        name="New Name",
+        description="New name for the preset",
+        default=""
+    )
+    
+    def execute(self, context):
+        try:
+            props = context.scene.gemini_render
+            
+            # Check if a preset is selected
+            if not props.prompt_preset or props.prompt_preset == "NONE":
+                self.report({'ERROR'}, "No preset selected")
+                return {'CANCELLED'}
+            
+            # Check if new name is valid
+            if not self.new_name.strip():
+                self.report({'ERROR'}, "New name cannot be empty")
+                return {'CANCELLED'}
+            
+            # Rename preset
+            old_name = props.prompt_preset
+            manager = prompt_presets.get_preset_manager()
+            if manager.update_preset(old_name, new_name=self.new_name.strip()):
+                self.report({'INFO'}, f"Preset renamed: '{old_name}' -> '{self.new_name}'")
+                # Update UI selection
+                props.prompt_preset = self.new_name.strip()
+                return {'FINISHED'}
+            else:
+                self.report({'ERROR'}, f"Failed to rename preset")
+                return {'CANCELLED'}
+                
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to rename preset: {str(e)}")
+            return {'CANCELLED'}
+    
+    def invoke(self, context, event):
+        props = context.scene.gemini_render
+        # Pre-fill with current name
+        if props.prompt_preset and props.prompt_preset != "NONE":
+            self.new_name = props.prompt_preset
+        return context.window_manager.invoke_props_dialog(self)
+
+
+class GEMINI_OT_delete_prompt_preset(Operator):
+    """Delete current preset"""
+    bl_idname = "gemini.delete_prompt_preset"
+    bl_label = "Delete Preset"
+    bl_description = "Delete the selected preset"
+    bl_options = {'REGISTER'}
+    
+    def execute(self, context):
+        try:
+            props = context.scene.gemini_render
+            
+            # Check if a preset is selected
+            if not props.prompt_preset or props.prompt_preset == "NONE":
+                self.report({'ERROR'}, "No preset selected")
+                return {'CANCELLED'}
+            
+            # Delete preset
+            preset_name = props.prompt_preset
+            manager = prompt_presets.get_preset_manager()
+            if manager.delete_preset(preset_name):
+                self.report({'INFO'}, f"Preset '{preset_name}' deleted")
+                # Reset UI selection
+                props.prompt_preset = "NONE"
+                return {'FINISHED'}
+            else:
+                self.report({'ERROR'}, f"Preset '{preset_name}' not found")
+                return {'CANCELLED'}
+                
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to delete preset: {str(e)}")
+            return {'CANCELLED'}
+    
+    def invoke(self, context, event):
+        # Show confirmation dialog
+        return context.window_manager.invoke_confirm(self, event)

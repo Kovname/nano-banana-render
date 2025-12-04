@@ -2,6 +2,41 @@ import bpy
 from bpy.types import PropertyGroup, Panel
 from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty, IntProperty, CollectionProperty, PointerProperty
 
+
+def get_preset_items(self, context):
+    """Dynamically get preset items from preset manager"""
+    try:
+        from . import prompt_presets
+        manager = prompt_presets.get_preset_manager()
+        items = manager.get_preset_items_for_enum()
+        return items
+    except Exception as e:
+        print(f"[UI] Error getting preset items: {e}")
+        return [("NONE", "No Presets", "No presets available")]
+
+
+def on_preset_change(self, context):
+    """Load preset prompt when preset selection changes"""
+    try:
+        from . import prompt_presets
+        
+        # Skip if NONE selected
+        if self.prompt_preset == "NONE":
+            return
+        
+        # Load preset
+        manager = prompt_presets.get_preset_manager()
+        preset = manager.get_preset_by_name(self.prompt_preset)
+        
+        if preset:
+            # Override prompt with preset content
+            self.prompt = preset.get("prompt", "")
+            print(f"[UI] Loaded preset: {self.prompt_preset}")
+        else:
+            print(f"[UI] Preset not found: {self.prompt_preset}")
+    except Exception as e:
+        print(f"[UI] Error loading preset: {e}")
+
 class GeminiRenderHistoryItem(PropertyGroup):
     """Single render history entry with visual preview"""
     
@@ -178,6 +213,14 @@ class GeminiRenderProperties(PropertyGroup):
         description="Describe how you want the depth map to be transformed",
         default="Make this photorealistic with detailed materials and proper lighting",
         maxlen=1000,
+    )
+    
+    # Prompt presets
+    prompt_preset: EnumProperty(
+        name="Preset",
+        description="Select a prompt preset",
+        items=get_preset_items,
+        update=on_preset_change
     )
     
     # Render History (saved in blend file only)
@@ -358,15 +401,50 @@ class BANANA_PT_render_panel(Panel):
             btn_row.scale_y = 1.2
             btn_row.operator("gemini.test_provider_connection", text="Test Connection", icon='PLUGIN')
         
-        # Prompt
+        # Prompt with Presets
         box = layout.box()
-        box.label(text="Prompt", icon='TEXT')
-        box.prop(props, "prompt", text="")
+        
+        # Preset dropdown and management buttons
+        preset_row = box.row()
+        preset_row.label(text="Prompt Presets", icon='TEXT')
+        
+        # Dropdown row
+        dropdown_row = box.row()
+        dropdown_row.prop(props, "prompt_preset", text="")
+        
+        # Management buttons row
+        btn_row = box.row(align=True)
+        btn_row.scale_y = 1.0
+        
+        # Check if preset is selected
+        preset_selected = props.prompt_preset and props.prompt_preset != "NONE"
+        
+        # Add button (always enabled)
+        btn_row.operator("gemini.add_prompt_preset", text="Add", icon='ADD')
+        
+        # Save, Rename, Delete buttons (disabled when no preset selected)
+        save_col = btn_row.column()
+        save_col.enabled = preset_selected
+        save_col.operator("gemini.save_prompt_preset", text="Save", icon='FILE_TICK')
+        
+        rename_col = btn_row.column()
+        rename_col.enabled = preset_selected
+        rename_col.operator("gemini.rename_prompt_preset", text="Rename", icon='SORTALPHA')
+        
+        del_col = btn_row.column()
+        del_col.enabled = preset_selected
+        del_col.operator("gemini.delete_prompt_preset", text="Del", icon='TRASH')
+        
+        # Prompt text area
+        # box.label(text="Prompt", icon='PROP_ON')
+        col = box.column(align=True)
+        # col.scale_y = 5.0  # Increase height for better readability
+        col.prop(props, "prompt", text="")
         
         # Style Reference (always visible - main feature!)
         box = layout.box()
         row = box.row(align=True)
-        row.scale_y = 2.0  # Make the main Style Reference toggle BIGGER!
+        row.scale_y = 1.5  # Make the main Style Reference toggle BIGGER!
         row.prop(props, "use_style_reference", text="🎨 Style Reference", toggle=True)
         
         if props.use_style_reference:
