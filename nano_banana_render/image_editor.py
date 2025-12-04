@@ -337,6 +337,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
     
     def execute(self, context):
         props = context.window_manager.nano_banana_editor
+        scene = context.scene  # Get scene for provider settings
         sima = context.space_data
         image = sima.image
         
@@ -455,7 +456,10 @@ class NANO_BANANA_OT_apply_edit(Operator):
                 original_image_name=image.name,
                 temp_dir=temp_dir,
                 resolution=props.resolution, # Pass selected resolution
-                original_size=(image.size[0], image.size[1]) # Pass original size for auto-detect
+                original_size=(image.size[0], image.size[1]), # Pass original size for auto-detect
+                provider_type=scene.gemini_render.provider_type,
+                provider_base_url=scene.gemini_render.provider_base_url,
+                provider_model_id=scene.gemini_render.provider_model_id
             )
             
             thread.start()

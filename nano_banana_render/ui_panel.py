@@ -52,13 +52,39 @@ class GeminiRenderHistoryItem(PropertyGroup):
 class GeminiRenderProperties(PropertyGroup):
     """Properties for Gemini Render addon stored in scene"""
     
+    # Provider selection
+    provider_type: EnumProperty(
+        name="Provider",
+        description="Select AI image generation provider",
+        items=[
+            ('google', "Google Gemini (Official)", "Official Google Gemini API"),
+            ('yunwu', "Yunwu.ai", "Yunwu.ai Gemini proxy"),
+            ('openrouter', "OpenRouter", "OpenRouter API"),
+            ('gptgod', "GPTGod", "GPTGod API"),
+        ],
+        default='google',
+    )
+    
     # Main properties
     api_key: StringProperty(
         name="API Key",
-        description="Google Gemini API Key",
+        description="API Key for selected provider",
         default="",
         subtype='PASSWORD',
         update=lambda self, context: sync_api_key(self, context)
+    )
+    
+    # Provider-specific settings
+    provider_base_url: StringProperty(
+        name="Base URL",
+        description="Custom base URL for API provider (leave empty for default)",
+        default="",
+    )
+    
+    provider_model_id: StringProperty(
+        name="Model ID",
+        description="Model ID for the provider (leave empty for default)",
+        default="",
     )
     
     prompt: StringProperty(
@@ -215,10 +241,44 @@ class BANANA_PT_render_panel(Panel):
                 toggle=True, icon='TRIA_DOWN' if props.show_auth else 'TRIA_RIGHT')
         
         if props.show_auth:
+            # Provider selection dropdown
+            box.label(text="Provider", icon='WORLD')
+            box.prop(props, "provider_type", text="")
+            
+            box.separator()
+            
+            # API Key input
+            box.label(text="API Key", icon='KEY_HLT')
             box.prop(props, "api_key", text="")
             
             if not props.api_key.strip():
-                box.label(text="Enter API key", icon='ERROR')
+                box.label(text="⚠ Enter API key", icon='ERROR')
+            
+            box.separator()
+            
+            # Base URL (optional)
+            box.label(text="Base URL (Optional)", icon='URL')
+            box.prop(props, "provider_base_url", text="")
+            help_row = box.row()
+            help_row.scale_y = 0.6
+            help_row.label(text="Leave empty for default", icon='INFO')
+            
+            box.separator()
+            
+            # Model ID (optional)
+            box.label(text="Model ID (Optional)", icon='PLUGIN')
+            box.prop(props, "provider_model_id", text="")
+            help_row = box.row()
+            help_row.scale_y = 0.6
+            help_row.label(text="Leave empty for default", icon='INFO')
+            
+            box.separator()
+            
+            # Provider management buttons
+            btn_row = box.row(align=True)
+            btn_row.scale_y = 1.0
+            # Placeholder for future Add/Save/Del/Test buttons
+            # btn_row.operator("gemini.test_provider_connection", text="Test Connection", icon='PLAY')
         
         # Prompt
         box = layout.box()

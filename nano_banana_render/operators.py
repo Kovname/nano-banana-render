@@ -7,6 +7,7 @@ import tempfile
 from . import gemini_api
 from . import depth_utils
 from . import threading_utils
+from . import providers
 
 class GEMINI_OT_ai_render(Operator):
     """AI Render operator - main functionality"""
@@ -47,18 +48,32 @@ class GEMINI_OT_ai_render(Operator):
             # Get API key
             api_key = props.api_key.strip() or gemini_api.get_api_key()
             if not api_key:
-                error_msg = "No API key found. Set GEMINI_API_KEY environment variable or enter key in UI."
+                error_msg = "No API key found. Set API key in the provider settings."
                 print(f"❌ [GEMINI] {error_msg}")
                 self.report({'ERROR'}, error_msg)
                 props.status_text = "❌ No API key"
                 return {'CANCELLED'}
             
             print(f"✅ [GEMINI] API key found, length: {len(api_key)}")
+            print(f"✅ [GEMINI] Provider: {props.provider_type}")
             print(f"✅ [GEMINI] User prompt: '{props.prompt[:50]}...'")
             
-            # Initialize components
+            # Initialize components based on provider
             depth_renderer = depth_utils.DepthRenderer()
-            api_client = gemini_api.GeminiAPI(api_key)
+            
+            # Create API client based on provider type
+            if props.provider_type == 'google':
+                # Use original Gemini API
+                api_client = gemini_api.GeminiAPI(api_key)
+            else:
+                # Use new provider system
+                config = providers.ProviderConfig(
+                    provider_type=props.provider_type,
+                    api_key=api_key,
+                    base_url=props.provider_base_url,
+                    model_id=props.provider_model_id
+                )
+                api_client = providers.ProviderFactory.create_provider(config)
             
             # Update UI state BEFORE starting thread
             props.is_rendering = True

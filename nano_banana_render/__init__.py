@@ -25,6 +25,8 @@ if "bpy" in locals():
         importlib.reload(depth_utils)
     if "gemini_api" in locals():
         importlib.reload(gemini_api)
+    if "providers" in locals():
+        importlib.reload(providers)
     if "threading_utils" in locals():
         importlib.reload(threading_utils)
     if "image_editor" in locals():
@@ -37,6 +39,7 @@ from . import ui_panel
 from . import operators
 from . import depth_utils
 from . import gemini_api
+from . import providers
 from . import threading_utils
 from . import image_editor
 from . import image_edit_thread

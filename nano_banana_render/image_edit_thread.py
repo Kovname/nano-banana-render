@@ -16,7 +16,8 @@ class ImageEditThread(threading.Thread):
     def __init__(self, image_path: str, edit_prompt: str, 
                  mask_path: Optional[str], reference_path: Optional[str],
                  api_key: str, context, original_image_name: str, temp_dir: str,
-                 resolution: str = 'AUTO', original_size: tuple = (1024, 1024)):
+                 resolution: str = 'AUTO', original_size: tuple = (1024, 1024),
+                 provider_type: str = 'google', provider_base_url: str = '', provider_model_id: str = ''):
         super().__init__(daemon=True)
         
         self.image_path = image_path
@@ -30,6 +31,11 @@ class ImageEditThread(threading.Thread):
         self.resolution = resolution
         self.original_size = original_size
         
+        # Provider settings
+        self.provider_type = provider_type
+        self.provider_base_url = provider_base_url
+        self.provider_model_id = provider_model_id
+        
         self.result_image_data = None
         self.error_message = None
         
@@ -41,11 +47,23 @@ class ImageEditThread(threading.Thread):
             # Update status
             self._update_status("Sending to AI...")
             
-            # Call Gemini API
+            # Call API based on provider
             from . import gemini_api
+            from . import providers
             
-            api_client = gemini_api.GeminiAPI(self.api_key)
+            # Create API client based on provider
+            if self.provider_type == 'google':
+                api_client = gemini_api.GeminiAPI(self.api_key)
+            else:
+                config = providers.ProviderConfig(
+                    provider_type=self.provider_type,
+                    api_key=self.api_key,
+                    base_url=self.provider_base_url,
+                    model_id=self.provider_model_id
+                )
+                api_client = providers.ProviderFactory.create_provider(config)
             
+            print(f"[NANO BANANA] Provider: {self.provider_type}")
             print(f"[NANO BANANA] Calling edit_image API...")
             print(f"  - Image: {self.image_path}")
             print(f"  - Prompt: {self.edit_prompt[:100]}...")
