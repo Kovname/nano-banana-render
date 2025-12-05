@@ -1338,9 +1338,15 @@ class GeminiAPI:
             try:
                 # Try to use the structure that worked for generation
                 if hasattr(types, "ImageConfig"):
+                    # Import aspect ratio utils
+                    from . import aspect_ratio_utils
+
+                    aspect_ratio = aspect_ratio_utils.find_closest_ratio(width, height)
+                    print(f"📐 [GEMINI] Edit aspect ratio: {aspect_ratio}")
+
                     img_conf = types.ImageConfig(
                         image_size=resolution_str,
-                        aspect_ratio="1:1",  # Default, but resolution_str should take precedence for size
+                        aspect_ratio=aspect_ratio,
                     )
                     config = types.GenerateContentConfig(
                         temperature=0.7,
@@ -1356,7 +1362,7 @@ class GeminiAPI:
                         "responseModalities": ["IMAGE"],
                         "imageConfig": {
                             "imageSize": resolution_str,
-                            "aspectRatio": "1:1",
+                            "aspectRatio": aspect_ratio,
                         },
                     }
                     print("[GEMINI] Using dictionary config for edit")
@@ -1492,6 +1498,12 @@ class GeminiAPI:
                 except Exception as e:
                     print(f"⚠️ [GEMINI] Could not detect image size for REST: {e}")
 
+            # Calculate aspect ratio
+            from . import aspect_ratio_utils
+
+            aspect_ratio = aspect_ratio_utils.find_closest_ratio(width, height)
+            print(f"📐 [GEMINI] REST Edit aspect ratio: {aspect_ratio}")
+
             payload = {
                 "contents": [{"parts": parts}],
                 "generationConfig": {
@@ -1499,7 +1511,10 @@ class GeminiAPI:
                     "maxOutputTokens": 32768,
                     "candidateCount": 1,
                     "responseModalities": ["IMAGE"],
-                    "imageConfig": {"imageSize": resolution_str, "aspectRatio": "1:1"},
+                    "imageConfig": {
+                        "imageSize": resolution_str,
+                        "aspectRatio": aspect_ratio,
+                    },
                 },
             }
 
