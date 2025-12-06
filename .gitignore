@@ -1,0 +1,7 @@
+*.code-workspace
+*.pyc
+__pycache__/
+*.md
+*.bat
+*.json
+.vscode/

@@ -61,7 +61,9 @@ class DepthRenderer:
             raise DepthRenderError("No visible objects found. Please add some objects to the scene.")
         
         # Check render engine supports Z pass
-        if scene.render.engine not in ['CYCLES', 'BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT']:
+        # Blender 5.0+ uses 'BLENDER_EEVEE', while 4.x uses 'BLENDER_EEVEE_NEXT'
+        supported_engines = ['CYCLES', 'BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT']
+        if scene.render.engine not in supported_engines:
             print(f"Warning: Render engine {scene.render.engine} may not support depth pass properly")
     
     def render_depth_map_mist(self, scene, mist_start: float = 5.0, mist_depth: float = 25.0, mist_falloff: str = 'LINEAR') -> str:
@@ -134,7 +136,8 @@ class DepthRenderer:
                     print(f"🌫️ [GEMINI] Mist settings (old API): start={mist_start}m, depth={mist_depth}m, falloff={mist_falloff}")
                 
                 # Use Eevee Next for fast rendering with Mist Pass support (Blender 4.5+)
-                available_engines = ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE', 'CYCLES', 'BLENDER_WORKBENCH']
+                # Try BLENDER_EEVEE first (Blender 5.0+), then BLENDER_EEVEE_NEXT (4.x), then others
+                available_engines = ['BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT', 'CYCLES', 'BLENDER_WORKBENCH']
                 selected_engine = None
                 
                 for engine in available_engines:
@@ -300,7 +303,7 @@ class DepthRenderer:
                 
                 print("🔗 [GEMINI] Compositor nodes setup: RenderLayers → Mist → FileOutput")
                 
-                # Fast render settings
+                # Fast render settings (supports both Blender 4.x and 5.0)
                 if render_engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                     if hasattr(scene, 'eevee'):
                         original_samples = scene.eevee.taa_render_samples
@@ -362,7 +365,7 @@ class DepthRenderer:
             self.temp_files.append(mist_output_path)
             
             try:
-                # Fast render settings
+                # Fast render settings (supports both Blender 4.x and 5.0)
                 if render_engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                     if hasattr(scene, 'eevee'):
                         original_samples = scene.eevee.taa_render_samples
@@ -642,7 +645,7 @@ class DepthRenderer:
                 scene.render.resolution_percentage = 100
                 print(f"📏 [GEMINI] Using full scene resolution: {scene.render.resolution_x}x{scene.render.resolution_y}")
                 
-                # Use good quality samples for proper mist
+                # Use good quality samples for proper mist (supports both Blender 4.x and 5.0)
                 if scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                     try:
                         if hasattr(scene, 'eevee'):
@@ -783,6 +786,7 @@ class DepthRenderer:
                 
                 # Restore samples
                 if original_samples is not None:
+                    # Restore Eevee samples (supports both Blender 4.x and 5.0)
                     if scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                         try:
                             if hasattr(scene, 'eevee'):
@@ -843,7 +847,7 @@ class DepthRenderer:
                 scene.render.resolution_percentage = 100
                 print(f"📊 [GEMINI] Resolution percentage set to {scene.render.resolution_percentage}% (full quality)")
                 
-                # Use good quality samples for proper depth maps
+                # Use good quality samples for proper depth maps (supports both Blender 4.x and 5.0)
                 if scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                     try:
                         if hasattr(scene, 'eevee'):
@@ -941,6 +945,7 @@ class DepthRenderer:
                 
                 # Restore samples
                 if original_samples is not None:
+                    # Restore Eevee samples (supports both Blender 4.x and 5.0)
                     if scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                         try:
                             if hasattr(scene, 'eevee'):
@@ -1132,8 +1137,8 @@ class DepthRenderer:
             try:
                 print("[GEMINI] Setting up regular render...")
                 
-                # Keep current engine or use Eevee Next if available
-                # In Blender 4.5+, only BLENDER_EEVEE_NEXT exists (not BLENDER_EEVEE)
+                # Keep current engine or use Eevee if available
+                # Blender 5.0+ uses 'BLENDER_EEVEE', Blender 4.x uses 'BLENDER_EEVEE_NEXT'
                 if scene.render.engine == 'CYCLES':
                     print("[GEMINI] Using CYCLES (current engine)")
                     # Store Cycles samples
@@ -1143,18 +1148,25 @@ class DepthRenderer:
                         if scene.cycles.samples < 64:
                             scene.cycles.samples = 64
                             print(f"[GEMINI] Increased Cycles samples to 64 for quality")
-                elif scene.render.engine == 'BLENDER_EEVEE_NEXT':
-                    print("[GEMINI] Using BLENDER_EEVEE_NEXT (current engine)")
-                    # Ensure good quality for Eevee Next
+                elif scene.render.engine in ['BLENDER_EEVEE', 'BLENDER_EEVEE_NEXT']:
+                    print(f"[GEMINI] Using {scene.render.engine} (current engine)")
+                    # Ensure good quality for Eevee
                     if hasattr(scene.eevee, 'taa_render_samples'):
                         original_samples = scene.eevee.taa_render_samples
                         if scene.eevee.taa_render_samples < 64:
                             scene.eevee.taa_render_samples = 64
                             print(f"[GEMINI] Increased Eevee samples to 64 for quality")
                 else:
-                    # Force Eevee Next for Blender 4.5+
-                    scene.render.engine = 'BLENDER_EEVEE_NEXT'
-                    print("[GEMINI] Switched to BLENDER_EEVEE_NEXT")
+                    # Try to switch to Eevee (try BLENDER_EEVEE first for 5.0, fallback to BLENDER_EEVEE_NEXT for 4.x)
+                    try:
+                        scene.render.engine = 'BLENDER_EEVEE'
+                        print("[GEMINI] Switched to BLENDER_EEVEE (Blender 5.0+)")
+                    except:
+                        try:
+                            scene.render.engine = 'BLENDER_EEVEE_NEXT'
+                            print("[GEMINI] Switched to BLENDER_EEVEE_NEXT (Blender 4.x)")
+                        except:
+                            print("[GEMINI] Warning: Could not switch to Eevee, using current engine")
                     
                     # Ensure good quality
                     if hasattr(scene.eevee, 'taa_render_samples'):
