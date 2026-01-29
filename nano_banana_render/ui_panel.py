@@ -196,14 +196,20 @@ class BANANA_PT_render_panel(Panel):
         scene = context.scene
         props = scene.gemini_render
         
-        # Auto-sync API key from preferences if scene key is empty
+        # Auto-sync API key from environment, preferences, or scene
         if not props.api_key:
             try:
-                # Use __package__ to get the correct addon name
-                package_name = __package__ if __package__ else "nano_banana_render"
-                addon_prefs = context.preferences.addons.get(package_name)
-                if addon_prefs and hasattr(addon_prefs.preferences, 'api_key') and addon_prefs.preferences.api_key:
-                    props.api_key = addon_prefs.preferences.api_key
+                # First, try to get from environment variables
+                import os
+                env_key = os.environ.get('GEMINI_API_KEY', '').strip()
+                if env_key:
+                    props.api_key = env_key
+                else:
+                    # Fall back to addon preferences
+                    package_name = __package__ if __package__ else "nano_banana_render"
+                    addon_prefs = context.preferences.addons.get(package_name)
+                    if addon_prefs and hasattr(addon_prefs.preferences, 'api_key') and addon_prefs.preferences.api_key:
+                        props.api_key = addon_prefs.preferences.api_key
             except:
                 pass
         
@@ -218,7 +224,7 @@ class BANANA_PT_render_panel(Panel):
             box.prop(props, "api_key", text="")
             
             if not props.api_key.strip():
-                box.label(text="Enter API key", icon='ERROR')
+                box.label(text="Enter API key or set GEMINI_API_KEY environment variable", icon='ERROR')
         
         # Prompt
         box = layout.box()

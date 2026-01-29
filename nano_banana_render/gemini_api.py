@@ -6,6 +6,13 @@ import os
 from typing import Optional, Tuple
 from io import BytesIO
 
+# Load environment variables from .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not required, will use os.environ directly
+
 # Try importing PIL
 try:
     from PIL import Image
@@ -32,6 +39,16 @@ except ImportError:
 class GeminiAPIError(Exception):
     """Custom exception for Gemini API errors"""
     pass
+
+def get_api_key_from_env() -> Optional[str]:
+    """
+    Get API key from environment variables.
+    Priority: GEMINI_API_KEY env var > .env file
+    """
+    api_key = os.environ.get('GEMINI_API_KEY')
+    if api_key:
+        return api_key.strip()
+    return None
 
 class GeminiAPI:
     """Client for Google Gemini API with official SDK"""
