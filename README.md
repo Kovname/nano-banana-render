@@ -2,42 +2,39 @@
 
 **Professional AI Rendering & Editing Suite for Blender**
 
-Transform your Blender scenes into stunning photorealistic images using the latest **Google Gemini 3 Pro** AI. Now with full **4K support**, **Inpainting**, and a dedicated **Image Editor** workflow.
+Transform your Blender scenes into stunning photorealistic images using the latest **Google Gemini 3 Pro** AI. Now with full **Blender 5.0+ support**, **Intelligent Aspect Ratio Handling**, and **Secure API Integration**.
 
-[![Blender](https://img.shields.io/badge/Blender-4.5%2B-orange?logo=blender)](https://www.blender.org/)
+[![Blender](https://img.shields.io/badge/Blender-4.5%2B%7C5.0%2B-orange?logo=blender)](https://www.blender.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-2.0.0-green.svg)](https://github.com/kovname/nano-banana-render/releases)
+[![Version](https://img.shields.io/badge/Version-2.1.0-green.svg)](https://github.com/kovname/nano-banana-render/releases)
 
 [![Support me on Ko-fi](https://storage.ko-fi.com/cdn/kofi3.png)](https://ko-fi.com/kovname)
 
 ---
 
-## What's New in v2.0
+## What's New in v2.1
 
-### AI Image Editor & Inpainting
+### 🚀 Blender 5.0 & Eevee Next Support
+Fully compatible with the latest Blender 5.0 release and the new Eevee Next rendering engine. The addon automatically detects your version and optimizes the workflow accordingly.
 
-A complete post-processing studio right inside Blender's Image Editor.
+### 📐 Intelligent Aspect Ratio
+Say goodbye to square crops! Nano Banana Pro now respects your scene's aspect ratio perfectly.
+- **Auto-Detection**: The AI automatically matches your scene's proportions (16:9, 4:3, Portrait, etc.).
+- **Smart Scaling**: Choose a base resolution (1K, 2K, 4K), and we'll scale it proportionally to fit your composition.
 
-- **Inpainting**: Draw directly on your image to add or remove objects.
-- **Reference Integration**: Select an area and load a photo to seamlessly place specific objects (e.g., "put this chair here").
-- **AI Editing**: Change materials, lighting, or details with simple text prompts.
-- **Seamless Integration**: Works instantly on your renders or any loaded image.
+### 🔒 Enhanced Security
+Your API keys are now safer than ever.
+- **Secure Storage**: API keys are stored in Blender Preferences or Environment Variables (`GEMINI_API_KEY`).
+- **No Leaks**: Keys are never saved inside `.blend` files, making it safe to share your project files.
 
-### 4K Resolution Support
+### 💾 Persistent History
+Never lose a render again. The new history guard system ensures your generated images are preserved in memory even if not immediately saved to disk.
 
-Generate and edit images in crystal clear detail.
-
-- **Native 4K Generation**: Create stunning high-res renders from the start.
-- **Smart Upscaling**: Edit standard images and output them in 4K.
-- **Auto-Detection**: The AI automatically detects your input size and matches it.
-
-### Powered by Gemini 3 Pro
-
-Using Google's latest vision model for:
-
-- Superior prompt understanding
-- Accurate lighting and physics
-- Incredible texture detail
+### 🧠 Structured Semantic Prompting (New Architecture)
+We've completely rewritten the core to be leaner and faster.
+- **JSON Technical Specs**: Instead of "talking" to the AI, we now send strict JSON technical specifications.
+- **Token Economy**: Optimized code removes fluff, saving tokens and speeding up generation.
+- **Zero Hallucinations**: Strict context isolation ensures the AI follows instructions with surgical precision.
 
 ---
 
@@ -47,7 +44,7 @@ Using Google's latest vision model for:
 
 |            Render Panel             |             Editor Studio             |
 | :---------------------------------: | :-----------------------------------: |
-| <img src="docs/images/ui_main.png"> | <img src="docs/images/ui_editor.png"> |
+| <img src="docs/images/ui_main.png" height="300"> | <img src="docs/images/ui_editor.png" height="300"> |
 
 _Simple controls for generation, powerful tools for editing._
 
@@ -69,7 +66,7 @@ Refine and perfect your results.
 
 - **Object Integration**: Add people, furniture, or effects that perfectly match your scene's lighting.
 - **Iterative Workflow**: Make change after change until it's perfect.
-- **History System**: Never lose a version. Jump back to any previous state instantly.
+- **History System**: Jump back to any previous state instantly.
 
 ---
 
@@ -80,7 +77,7 @@ Refine and perfect your results.
 _Located in 3D View > N-Panel > Nano Banana Pro_
 
 1.  **Set Up Scene**: Block out your shapes. No need for complex materials.
-2.  **Choose Resolution**: Select **1K**, **2K**, or **4K**.
+2.  **Choose Resolution**: Select **1K**, **2K**, or **4K**. The aspect ratio will match your scene automatically.
 3.  **Add Style (Optional)**: Load a reference image to define the mood.
 4.  **Render**: Click "Generate AI Render".
 
@@ -115,13 +112,13 @@ Turn blockouts into art using Mist Pass
 Uses geometry + reference image style
 | Depth Input | Style Reference | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/depth_input.png" width="250"> | <img src="docs/images/style_ref.png" width="250"> | <img src="docs/images/depth_style_result.png" width="250"> |
+| <img src="docs/images/depth_input.png" height="150"> | <img src="docs/images/style_ref.png" height="150"> | <img src="docs/images/depth_style_result.png" height="150"> |
 
 **Without Style Reference**
 Uses geometry + text prompt only
 | Depth Input | Text Prompt | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/depth_input_2.png" width="250"> | "Make it ultra realistic, like a photo taken on an iPhone" | <img src="docs/images/depth_prompt_result.png" width="250"> |
+| <img src="docs/images/depth_input_2.png" height="150"> | "Make it ultra realistic, like a photo taken on an iPhone" | <img src="docs/images/depth_prompt_result.png" height="150"> |
 
 ### 2. Regular Render Mode
 
@@ -131,13 +128,13 @@ Enhance existing Eevee/Cycles renders
 Transfer style while keeping exact composition
 | Original Render | Style Reference | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/reg_render.png" width="250"> | <img src="docs/images/reg_style.png" width="250"> | <img src="docs/images/reg_style_result.png" width="250"> |
+| <img src="docs/images/reg_render.png" height="150"> | <img src="docs/images/reg_style.png" height="150"> | <img src="docs/images/reg_style_result.png" height="150"> |
 
 **Without Style Reference**
 Change lighting/mood with text
 | Original Render | Text Prompt | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/reg_render_2.png" width="250"> | "Make a sketch on paper with a regular pencil." | <img src="docs/images/reg_prompt_result.png" width="250"> |
+| <img src="docs/images/reg_render_2.png" height="150"> | "Make a sketch on paper with a regular pencil." | <img src="docs/images/reg_prompt_result.png" height="150"> |
 
 ### 3. AI Editor Studio
 
@@ -147,19 +144,19 @@ Post-processing magic
 Draw mask + Prompt
 | Original | Mask | Prompt | Result |
 | :---: | :---: | :---: | :---: |
-| <img src="docs/images/edit_orig.png" width="200"> | <img src="docs/images/edit_mask.png" width="200"> | "Add a red car" | <img src="docs/images/edit_result.png" width="200"> |
+| <img src="docs/images/edit_orig.png" height="150"> | <img src="docs/images/edit_mask.png" height="150"> | "Add a red car" | <img src="docs/images/edit_result.png" height="150"> |
 
 **Object Integration**
 Draw mask + Reference Image + Prompt
 | Original | Mask | Reference Object | Result |
 | :---: | :---: | :---: | :---: |
-| <img src="docs/images/edit_result.png" width="200"> | <img src="docs/images/int_mask.png" width="200"> | <img src="docs/images/int_ref.png" width="200"> | <img src="docs/images/int_result.png" width="200"> |
+| <img src="docs/images/edit_result.png" height="150"> | <img src="docs/images/int_mask.png" height="150"> | <img src="docs/images/int_ref.png" height="150"> | <img src="docs/images/int_result.png" height="150"> |
 
 **Full Image Edit**
 Prompt only (no mask)
 | Original | Prompt | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/int_result.png" width="250"> | "Make it night time, raining" | <img src="docs/images/full_result.png" width="250"> |
+| <img src="docs/images/int_result.png" height="150"> | "Make it night time, raining" | <img src="docs/images/full_result.png" height="150"> |
 
 ---
 
@@ -168,7 +165,10 @@ Prompt only (no mask)
 1.  **Get API Key**: Visit [Google AI Studio](https://aistudio.google.com/) and create a free API key.
 2.  **Download**: Get the latest `.zip` from [Releases](https://github.com/kovname/nano-banana-render/releases).
 3.  **Install**: In Blender, go to `Edit > Preferences > Add-ons > Install...` and select the zip.
-4.  **Configure**: Paste your API key in the addon preferences.
+4.  **Configure**:
+    - Go to Add-on Preferences (expand the addon details).
+    - Paste your API key in the `Gemini API Key` field.
+    - *Alternatively, set a `GEMINI_API_KEY` environment variable on your system.*
 
 > **Note**: Google provides a generous free tier for the Gemini API, but you **must enable billing** in Google Cloud Console to access the Gemini 3 Pro model used by this addon.
 

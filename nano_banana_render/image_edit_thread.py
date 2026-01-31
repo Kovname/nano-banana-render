@@ -54,36 +54,41 @@ class ImageEditThread(threading.Thread):
             print(f"  - Resolution Mode: {self.resolution}")
             print(f"  - Original Size: {self.original_size}")
             
-            # Resolve resolution
-            width = 1024
-            height = 1024
+            # Resolve resolution while PRESERVING ASPECT RATIO
+            orig_w, orig_h = self.original_size
+            aspect_ratio = orig_w / orig_h if orig_h > 0 else 1.0
             
+            # Determine base resolution
             if self.resolution == '4096':
-                width = 4096
-                height = 4096
+                base = 4096
             elif self.resolution == '2048':
-                width = 2048
-                height = 2048
+                base = 2048
             elif self.resolution == '1024':
-                width = 1024
-                height = 1024
-            else: # AUTO
-                # Robust auto-detection based on original size
-                orig_w, orig_h = self.original_size
+                base = 1024
+            else:  # AUTO
+                # Auto-detect base from original size
                 max_dim = max(orig_w, orig_h)
-                
                 if max_dim > 2048:
-                    width = 4096
-                    height = 4096
-                    print(f"[NANO BANANA] Auto-resolution: Detected large image ({max_dim}px) -> Setting 4K")
+                    base = 4096
+                    print(f"[NANO BANANA] Auto-resolution: Detected large image ({max_dim}px) -> Setting 4K base")
                 elif max_dim > 1024:
-                    width = 2048
-                    height = 2048
-                    print(f"[NANO BANANA] Auto-resolution: Detected medium image ({max_dim}px) -> Setting 2K")
+                    base = 2048
+                    print(f"[NANO BANANA] Auto-resolution: Detected medium image ({max_dim}px) -> Setting 2K base")
                 else:
-                    width = 1024
-                    height = 1024
-                    print(f"[NANO BANANA] Auto-resolution: Detected standard image ({max_dim}px) -> Setting 1K")
+                    base = 1024
+                    print(f"[NANO BANANA] Auto-resolution: Detected standard image ({max_dim}px) -> Setting 1K base")
+            
+            # Calculate dimensions preserving aspect ratio
+            if aspect_ratio >= 1.0:
+                # Landscape or square
+                width = base
+                height = int(base / aspect_ratio)
+            else:
+                # Portrait
+                height = base
+                width = int(base * aspect_ratio)
+            
+            print(f"[NANO BANANA] Output dimensions: {width}x{height} (preserving aspect ratio {aspect_ratio:.2f})")
             
             image_data, mime_type = api_client.edit_image(
                 image_path=self.image_path,

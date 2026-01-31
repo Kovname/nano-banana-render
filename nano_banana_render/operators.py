@@ -18,78 +18,59 @@ class GEMINI_OT_ai_render(Operator):
     current_thread = None
     
     def execute(self, context):
-        """Execute AI render operation"""
+        """Execute AI render operation."""
         scene = context.scene
         props = scene.gemini_render
-        
-        print("🎯 [GEMINI] Starting AI render operation...")
         
         try:
             # Reset status if stuck
             if props.is_rendering:
-                print("⚠️ [GEMINI] Previous render still active, resetting...")
                 props.is_rendering = False
             
             # Validate inputs
             error = self._validate_inputs(context, props)
             if error:
-                print(f"❌ [GEMINI] Validation error: {error}")
                 self.report({'ERROR'}, error)
-                props.status_text = f"❌ {error}"
+                props.status_text = f"Error: {error}"
                 return {'CANCELLED'}
             
             # Stop any existing background thread
             if self.current_thread and self.current_thread.is_alive():
-                print("🛑 [GEMINI] Stopping previous background thread...")
                 self.current_thread.stop()
                 self.current_thread.join(timeout=2.0)
             
-            # Get API key
-            api_key = props.api_key.strip() or gemini_api.get_api_key()
+            # Get API key (from environment variable or addon preferences only - not scene for security)
+            api_key = gemini_api.get_api_key()
             if not api_key:
-                error_msg = "No API key found. Set GEMINI_API_KEY environment variable or enter key in UI."
-                print(f"❌ [GEMINI] {error_msg}")
+                error_msg = "No API key found. Set GEMINI_API_KEY environment variable or configure in Addon Preferences."
                 self.report({'ERROR'}, error_msg)
-                props.status_text = "❌ No API key"
+                props.status_text = "No API key"
                 return {'CANCELLED'}
-            
-            print(f"✅ [GEMINI] API key found, length: {len(api_key)}")
-            print(f"✅ [GEMINI] User prompt: '{props.prompt[:50]}...'")
             
             # Initialize components
             depth_renderer = depth_utils.DepthRenderer()
             api_client = gemini_api.GeminiAPI(api_key)
             
-            # Update UI state BEFORE starting thread
+            # Update UI state and start thread
             props.is_rendering = True
-            props.status_text = "🚀 Starting AI render..."
+            props.status_text = "Starting AI render..."
             
-            print("🧵 [GEMINI] Starting full background thread...")
-            
-            # Back to full background thread but with proper context override
             self.current_thread = threading_utils.FullRenderThread(
-                context=context,  # Pass full context
+                context=context,
                 depth_renderer=depth_renderer,
                 api_client=api_client,
                 user_prompt=props.prompt
             )
             
             self.current_thread.start()
-            
-            self.report({'INFO'}, "AI render started in background - check Console for progress")
-            print("✅ [GEMINI] Background thread started successfully")
+            self.report({'INFO'}, "AI render started in background")
             return {'FINISHED'}
             
         except Exception as e:
             error_msg = f"Failed to start AI render: {str(e)}"
-            print(f"💥 [GEMINI] Exception: {error_msg}")
-            print(f"💥 [GEMINI] Exception type: {type(e).__name__}")
-            import traceback
-            print(f"💥 [GEMINI] Full traceback:\n{traceback.format_exc()}")
-            
             self.report({'ERROR'}, error_msg)
             props.is_rendering = False
-            props.status_text = f"❌ Error: {str(e)}"
+            props.status_text = f"Error: {str(e)}"
             return {'CANCELLED'}
     
     def _validate_inputs(self, context, props) -> str:
@@ -123,38 +104,28 @@ class GEMINI_OT_stop_render(Operator):
     bl_options = {'REGISTER'}
     
     def execute(self, context):
-        """Execute stop render operation"""
+        """Execute stop render operation."""
         try:
-            print("🛑 [GEMINI] Stop render requested...")
             props = context.scene.gemini_render
             
             # Stop background thread if running
             if hasattr(GEMINI_OT_ai_render, 'current_thread') and GEMINI_OT_ai_render.current_thread:
                 if GEMINI_OT_ai_render.current_thread.is_alive():
-                    print("🛑 [GEMINI] Stopping active background thread...")
                     GEMINI_OT_ai_render.current_thread.stop()
                     GEMINI_OT_ai_render.current_thread.join(timeout=3.0)
-                    print("🛑 [GEMINI] Background thread stopped")
-                else:
-                    print("⚠️ [GEMINI] Background thread not active, just resetting UI...")
-            else:
-                print("⚠️ [GEMINI] No background thread found, just resetting UI...")
             
-            # Always reset UI state
+            # Reset UI state
             props.is_rendering = False
-            props.status_text = "🛑 Cancelled by user"
+            props.status_text = "Cancelled by user"
             
-            self.report({'INFO'}, "AI render stopped - UI reset")
-            print("✅ [GEMINI] UI state reset to normal")
+            self.report({'INFO'}, "AI render stopped")
             return {'FINISHED'}
             
         except Exception as e:
-            print(f"💥 [GEMINI] Error stopping render: {str(e)}")
-            # Force reset UI even if there was an error
             try:
                 props = context.scene.gemini_render
                 props.is_rendering = False
-                props.status_text = "❌ Error stopping - reset manually"
+                props.status_text = "Error stopping - reset manually"
             except:
                 pass
             self.report({'ERROR'}, f"Failed to stop render: {str(e)}")
@@ -186,15 +157,13 @@ class GEMINI_OT_validate_api_key(Operator):
     def execute(self, context):
         """Validate API key"""
         try:
-            props = context.scene.gemini_render
-            api_key = props.api_key.strip() or gemini_api.get_api_key()
+            api_key = gemini_api.get_api_key()
             
             if not api_key:
-                self.report({'ERROR'}, "No API key provided")
+                self.report({'ERROR'}, "No API key configured. Set GEMINI_API_KEY or configure in Addon Preferences.")
                 return {'CANCELLED'}
             
-            # TODO: Add actual API validation call
-            # For now, just check format
+            # Check format
             if api_key.startswith('AIza') and len(api_key) > 35:
                 self.report({'INFO'}, "API key format looks valid")
             else:
@@ -204,6 +173,24 @@ class GEMINI_OT_validate_api_key(Operator):
             
         except Exception as e:
             self.report({'ERROR'}, f"Failed to validate API key: {str(e)}")
+            return {'CANCELLED'}
+
+
+class GEMINI_OT_open_preferences(Operator):
+    """Open addon preferences to configure API key"""
+    bl_idname = "gemini.open_preferences"
+    bl_label = "Open Addon Preferences"
+    bl_description = "Open addon preferences to configure API key"
+    bl_options = {'REGISTER'}
+    
+    def execute(self, context):
+        try:
+            bpy.ops.screen.userpref_show('INVOKE_DEFAULT')
+            # Set the addon filter to show our addon
+            context.preferences.active_section = 'ADDONS'
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to open preferences: {str(e)}")
             return {'CANCELLED'}
 
 class GEMINI_OT_reset_state(Operator):
@@ -216,7 +203,7 @@ class GEMINI_OT_reset_state(Operator):
     def execute(self, context):
         """Reset UI state"""
         try:
-            print("🔄 [GEMINI] Force resetting UI state...")
+            print("[GEMINI] Force resetting UI state...")
             props = context.scene.gemini_render
             
             # Force reset all state
@@ -228,7 +215,6 @@ class GEMINI_OT_reset_state(Operator):
                 try:
                     GEMINI_OT_ai_render.current_thread.stop()
                     GEMINI_OT_ai_render.current_thread = None
-                    print("🛑 [GEMINI] Force stopped background thread")
                 except:
                     pass
             
@@ -237,12 +223,10 @@ class GEMINI_OT_reset_state(Operator):
                 if area.type == 'VIEW_3D':
                     area.tag_redraw()
             
-            self.report({'INFO'}, "UI state reset - render button should work now")
-            print("✅ [GEMINI] UI state force reset completed")
+            self.report({'INFO'}, "UI state reset")
             return {'FINISHED'}
             
         except Exception as e:
-            print(f"💥 [GEMINI] Error resetting state: {str(e)}")
             self.report({'ERROR'}, f"Failed to reset state: {str(e)}")
             return {'CANCELLED'}
 
@@ -254,18 +238,13 @@ class GEMINI_OT_open_console(Operator):
     bl_options = {'REGISTER'}
     
     def execute(self, context):
-        """Open console"""
+        """Open console."""
         try:
-            # Toggle console
             bpy.ops.wm.console_toggle()
-            self.report({'INFO'}, "Console toggled - look for [GEMINI] messages")
-            print("📋 [GEMINI] Console opened - all logs are prefixed with [GEMINI]")
-            print("📋 [GEMINI] Look for messages with 🎯🔄📊✅❌💥 emojis for render progress")
+            self.report({'INFO'}, "Console toggled")
             return {'FINISHED'}
-            
-        except Exception as e:
+        except Exception:
             self.report({'WARNING'}, "Console toggle not available on this platform")
-            print("⚠️ [GEMINI] Console toggle not available - check System Console in Window menu")
             return {'CANCELLED'}
 
 
@@ -286,82 +265,61 @@ class GEMINI_OT_load_history(Operator):
         try:
             props = context.scene.gemini_render
             
-            print(f"🖼️ [GEMINI] GEMINI_OT_load_history called with index: {self.history_index}")
-            
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                print(f"💥 [GEMINI] Invalid history index: {self.history_index}, history length: {len(props.render_history)}")
                 self.report({'ERROR'}, "Invalid history index")
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
-            print(f"🖼️ [GEMINI] Load history item: {history_item.prompt[:30]}...")
+            print(f"[GEMINI] Loading history item #{self.history_index}: {history_item.image_name}")
             
-            # Try to find the AI_Result image in Blender  
+            # Try to find the AI_Result image
             image = None
             if history_item.image_name and history_item.image_name in bpy.data.images:
                 try:
                     candidate = bpy.data.images[history_item.image_name]
-                    if candidate.has_data:  # Check if image has valid data
+                    if candidate.has_data:
                         image = candidate
-                        print(f"✅ [GEMINI] Found AI_Result image for loading: {candidate.name}")
+                        print(f"[GEMINI] Found image: {image.name}")
                     else:
-                        print(f"⚠️ [GEMINI] AI_Result image has no data: {candidate.name}")
+                        print(f"[GEMINI] Image found but has no data: {history_item.image_name}")
                 except Exception as e:
-                    print(f"⚠️ [GEMINI] Error finding AI_Result image: {e}")
-                    pass
+                    print(f"[GEMINI] Error accessing image: {e}")
+            else:
+                print(f"[GEMINI] Image not found in bpy.data.images: {history_item.image_name}")
             
             if image:
-                
-                # Load as render result
                 from .threading_utils import execute_in_main_thread
                 
                 def _load_from_history():
                     try:
-                        # Use the original AI_Result image directly - no duplication needed
-                        print(f"🖼️ [GEMINI] Using original AI_Result image for loading: {image.name}")
-                        duplicate_image = image  # Use original, don't create copy
-                        
-                        # Open in new window or existing Image Editor (don't replace Render Result)
                         try:
-                            # Method 1: Create new window with Image Editor
                             bpy.ops.wm.window_new()
                             new_window = bpy.context.window_manager.windows[-1]
-                            
                             for area in new_window.screen.areas:
                                 if area.type != 'IMAGE_EDITOR':
                                     area.type = 'IMAGE_EDITOR'
                                     for space in area.spaces:
                                         if space.type == 'IMAGE_EDITOR':
-                                            space.image = duplicate_image
+                                            space.image = image
                                             area.tag_redraw()
-                                            print(f"🖼️ [GEMINI] Opened AI_Result in new window: {duplicate_image.name}")
                                             return
                                     break
-                                    
-                        except Exception as e:
-                            print(f"⚠️ [GEMINI] Could not create new window: {e}")
-                            
-                            # Method 2: Use existing Image Editor (but don't replace Render Result)
+                        except Exception:
                             for area in context.screen.areas:
                                 if area.type == 'IMAGE_EDITOR':
                                     for space in area.spaces:
                                         if space.type == 'IMAGE_EDITOR':
-                                            space.image = duplicate_image
+                                            space.image = image
                                             area.tag_redraw()
-                                            print(f"🖼️ [GEMINI] Set AI_Result in existing Image Editor: {duplicate_image.name}")
                                             return
-                        
-                        print(f"✅ [GEMINI] AI_Result image opened: {duplicate_image.name}")
-                    
-                    except Exception as e:
-                        print(f"💥 [GEMINI] Error loading history: {e}")
+                    except Exception:
+                        pass
                 
                 execute_in_main_thread(_load_from_history)
-                
                 self.report({'INFO'}, f"Opened: {image.name}")
                 return {'FINISHED'}
             else:
-                self.report({'WARNING'}, "History image not found or has no valid data")
+                self.report({'WARNING'}, "History image not found")
                 return {'CANCELLED'}
                 
         except Exception as e:
@@ -392,19 +350,12 @@ class GEMINI_OT_delete_history(Operator):
             
             history_item = props.render_history[self.history_index]
             
-            # Remove main AI_Result image from Blender if it exists
+            # Remove images from Blender
             if history_item.image_name in bpy.data.images:
-                image = bpy.data.images[history_item.image_name]
-                bpy.data.images.remove(image)
-                print(f"🗑️ [GEMINI] Removed AI_Result image: {history_item.image_name}")
+                bpy.data.images.remove(bpy.data.images[history_item.image_name])
             
-            # Remove style reference thumbnail if it exists
             if history_item.style_reference_thumbnail and history_item.style_reference_thumbnail in bpy.data.images:
-                style_thumbnail = bpy.data.images[history_item.style_reference_thumbnail]
-                bpy.data.images.remove(style_thumbnail)
-                print(f"🗑️ [GEMINI] Removed style thumbnail: {history_item.style_reference_thumbnail}")
-            
-            # NO STYLE THUMBNAIL REMOVAL - they don't exist anymore
+                bpy.data.images.remove(bpy.data.images[history_item.style_reference_thumbnail])
             
             # Remove from history
             props.render_history.remove(self.history_index)
@@ -497,7 +448,6 @@ class GEMINI_OT_use_history_style(Operator):
             props.use_style_reference = True
             
             self.report({'INFO'}, f"Style reference set: {style_image.name}")
-            print(f"🎨 [GEMINI] Style reference copied from history: {style_image.name}")
             return {'FINISHED'}
                 
         except Exception as e:
@@ -526,7 +476,7 @@ class GEMINI_OT_history_context_menu(Operator):
             history_idx = menu_context.window_manager.history_menu_index
             
             if history_idx >= len(props.render_history):
-                layout.label(text="❌ Invalid history item")
+                layout.label(text="Invalid history item")
                 return
             
             item = props.render_history[history_idx]
@@ -546,8 +496,7 @@ class GEMINI_OT_history_context_menu(Operator):
                 both_op = layout.operator("gemini.use_history_both", text="Use Both", icon='GHOST_ENABLED')
                 both_op.history_index = history_idx
             else:
-                # No style info
-                layout.label(text="🚫 No style used", icon='INFO')
+                layout.label(text="No style used", icon='INFO')
             
             # Delete action
             layout.separator()
@@ -598,17 +547,13 @@ class GEMINI_OT_use_history_both(Operator):
                 if style_image:
                     props.style_reference_image = style_image
                     props.use_style_reference = True
-                    self.report({'INFO'}, f"✅ Both copied: prompt + style ({style_image.name})")
-                    print(f"🎯 [GEMINI] Both copied from history: prompt + style ({style_image.name})")
+                    self.report({'INFO'}, f"Both copied: prompt + style ({style_image.name})")
                 else:
-                    # Just prompt if style missing
                     props.use_style_reference = False
-                    self.report({'WARNING'}, f"⚠️ Style missing, copied prompt only")
-                    print(f"📝 [GEMINI] Style reference missing, copied prompt only")
+                    self.report({'WARNING'}, f"Style missing, copied prompt only")
             else:
                 props.use_style_reference = False
-                self.report({'INFO'}, f"✅ Prompt copied (no style was used)")
-                print(f"📝 [GEMINI] Prompt copied, no style reference was used")
+                self.report({'INFO'}, f"Prompt copied (no style was used)")
             
             return {'FINISHED'}
                 
@@ -634,103 +579,67 @@ class GEMINI_OT_open_history_image(Operator):
         try:
             props = context.scene.gemini_render
             
-            print(f"🖼️ [GEMINI] GEMINI_OT_open_history_image called with index: {self.history_index}")
-            
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                print(f"💥 [GEMINI] Invalid history index: {self.history_index}, history length: {len(props.render_history)}")
                 self.report({'ERROR'}, "Invalid history index")
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
-            print(f"🖼️ [GEMINI] History item: {history_item.prompt[:30]}...")
             
-            # Get the main AI_Result image directly (no thumbnails)
+            # Get the main AI_Result image
             image_to_open = None
-            
-            print(f"🖼️ [GEMINI] Looking for main image: {history_item.image_name}")
-            
-            # Try main image (AI_Result_*)
             if history_item.image_name and history_item.image_name in bpy.data.images:
                 try:
                     candidate = bpy.data.images[history_item.image_name]
-                    print(f"🖼️ [GEMINI] Found AI_Result image: {candidate.name}, has_data: {candidate.has_data}")
-                    if candidate.has_data:  # Check if image has valid data
+                    if candidate.has_data:
                         image_to_open = candidate
-                        print(f"✅ [GEMINI] Using AI_Result image: {image_to_open.name}")
-                    else:
-                        print(f"⚠️ [GEMINI] AI_Result image has no data: {candidate.name}")
-                except Exception as e:
-                    print(f"⚠️ [GEMINI] Error checking AI_Result image: {e}")
+                except Exception:
                     pass
             
             if not image_to_open:
-                print(f"💥 [GEMINI] AI_Result image not found or has no data for history index {self.history_index}")
-                self.report({'ERROR'}, "AI Result image not found or has no valid data")
+                self.report({'ERROR'}, "AI Result image not found")
                 return {'CANCELLED'}
-            
-            # Use the original AI_Result image directly - no duplication needed
             print(f"🖼️ [GEMINI] Using original AI_Result image directly: {image_to_open.name}")
-            duplicate_image = image_to_open  # Use original, don't create copy
+            duplicate_image = image_to_open
             
             # Try to open in new window or existing Image Editor
-            print(f"🖼️ [GEMINI] Attempting to display AI_Result in Image Editor...")
-            
             try:
-                # Method 1: Create new window with Image Editor
-                print(f"🖼️ [GEMINI] Method 1: Creating new window...")
                 bpy.ops.wm.window_new()
                 new_window = bpy.context.window_manager.windows[-1]
-                print(f"🖼️ [GEMINI] New window created, searching for areas...")
                 
                 for area in new_window.screen.areas:
-                    print(f"🖼️ [GEMINI] Found area type: {area.type}")
                     if area.type != 'IMAGE_EDITOR':
                         area.type = 'IMAGE_EDITOR'
-                        print(f"🖼️ [GEMINI] Converted area to IMAGE_EDITOR")
                         for space in area.spaces:
                             if space.type == 'IMAGE_EDITOR':
                                 space.image = duplicate_image
                                 area.tag_redraw()
-                                print(f"✅ [GEMINI] SUCCESS: Opened AI_Result in new window: {duplicate_image.name}")
-                                print(f"🖼️ [GEMINI] Image Editor now shows: {space.image.name if space.image else 'None'}")
                                 self.report({'INFO'}, f"Opened: {duplicate_image.name}")
                                 return {'FINISHED'}
                         break
                 
-            except Exception as e:
-                print(f"⚠️ [GEMINI] Could not create new window: {e}")
-                
-                # Method 2: Find existing Image Editor
-                print(f"🖼️ [GEMINI] Method 2: Looking for existing Image Editor...")
+            except Exception:
+                # Fallback: Find existing Image Editor
                 for area in bpy.context.screen.areas:
                     if area.type == 'IMAGE_EDITOR':
-                        print(f"🖼️ [GEMINI] Found existing Image Editor")
                         for space in area.spaces:
                             if space.type == 'IMAGE_EDITOR':
                                 space.image = duplicate_image
                                 area.tag_redraw()
-                                print(f"✅ [GEMINI] SUCCESS: Set AI_Result in existing Image Editor: {duplicate_image.name}")
-                                print(f"🖼️ [GEMINI] Image Editor now shows: {space.image.name if space.image else 'None'}")
                                 self.report({'INFO'}, f"Opened: {duplicate_image.name}")
                                 return {'FINISHED'}
                 
-                # Method 3: Convert safe area to Image Editor
-                print(f"🖼️ [GEMINI] Method 3: Converting safe area to Image Editor...")
+                # Last resort: Convert safe area to Image Editor
                 SAFE_AREAS = ['TEXT_EDITOR', 'CONSOLE', 'INFO', 'FILE_BROWSER']
                 for area in bpy.context.screen.areas:
                     if area.type in SAFE_AREAS:
-                        print(f"🖼️ [GEMINI] Found safe area: {area.type}")
                         area.type = 'IMAGE_EDITOR'
                         for space in area.spaces:
                             if space.type == 'IMAGE_EDITOR':
                                 space.image = duplicate_image
                                 area.tag_redraw()
-                                print(f"✅ [GEMINI] SUCCESS: Converted area to show AI_Result: {duplicate_image.name}")
-                                print(f"🖼️ [GEMINI] Image Editor now shows: {space.image.name if space.image else 'None'}")
                                 self.report({'INFO'}, f"Opened: {duplicate_image.name}")
                                 return {'FINISHED'}
                 
-                print(f"💥 [GEMINI] FAILED: Could not find suitable area to display image")
                 self.report({'WARNING'}, "Could not find suitable area to display image")
                 return {'CANCELLED'}
                 
@@ -778,10 +687,7 @@ class GEMINI_OT_load_image_as_reference(Operator, ImportHelper):
                 # Set a nice name
                 if image_name.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.tga', '.exr', '.hdr')):
                     base_name = os.path.splitext(image_name)[0]
-                    image.name = f"Reference_{base_name}"
-                
-                print(f"🎨 [GEMINI] Loaded reference image: {image.name}")
-                print(f"📏 [GEMINI] Image size: {image.size[0]}x{image.size[1]}")
+                image.name = f"Reference_{base_name}"
                 
             except Exception as e:
                 self.report({'ERROR'}, f"Failed to load image: {str(e)}")
@@ -790,18 +696,14 @@ class GEMINI_OT_load_image_as_reference(Operator, ImportHelper):
             # Automatically set as reference
             props.style_reference_image = image
             
-            # Enable style reference if not enabled
             if not props.use_style_reference:
                 props.use_style_reference = True
                 
             self.report({'INFO'}, f"Reference image loaded: {image.name}")
-            print(f"✅ [GEMINI] Reference image set automatically: {image.name}")
-            
             return {'FINISHED'}
             
         except Exception as e:
             self.report({'ERROR'}, f"Failed to load reference image: {str(e)}")
-            print(f"💥 [GEMINI] Reference loading error: {str(e)}")
             return {'CANCELLED'}
     
     def invoke(self, context, event):

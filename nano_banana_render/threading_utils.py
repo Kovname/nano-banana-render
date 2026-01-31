@@ -55,51 +55,36 @@ def execute_in_main_thread(func: Callable, *args, **kwargs) -> None:
     _thread_manager.execute_in_main_thread(func, *args, **kwargs)
 
 def update_render_status(scene, status_text: str, is_rendering: bool = None) -> None:
-    """Update render status in UI (thread-safe)"""
+    """Update render status in UI (thread-safe)."""
     def _update():
         try:
-            print(f"[GEMINI] Updating status: {status_text}")
             if hasattr(scene, 'gemini_render'):
                 props = scene.gemini_render
                 props.status_text = status_text
                 if is_rendering is not None:
                     props.is_rendering = is_rendering
-                    print(f"[GEMINI] Set is_rendering = {is_rendering}")
                 
-                # Force redraw all areas
-                try:
-                    import bpy
-                    for window in bpy.context.window_manager.windows:
-                        for area in window.screen.areas:
-                            if area.type == 'VIEW_3D':
-                                area.tag_redraw()
-                except Exception as redraw_error:
-                    print(f"[GEMINI] Redraw warning: {redraw_error}")
-                    
-                print("[GEMINI] Status updated successfully")
-            else:
-                print("[GEMINI] Scene has no gemini_render property")
+                # Force redraw
+                for window in bpy.context.window_manager.windows:
+                    for area in window.screen.areas:
+                        if area.type == 'VIEW_3D':
+                            area.tag_redraw()
         except Exception as e:
             print(f"[GEMINI] Error updating status: {e}")
-            import traceback
-            print(f"[GEMINI] Status update traceback:\n{traceback.format_exc()}")
     
     execute_in_main_thread(_update)
 
 def save_reference_image_temp(scene) -> str:
-    """Save reference image from scene properties to temporary file"""
+    """Save reference image from scene properties to temporary file."""
     try:
-        import bpy
         import tempfile
         import os
         
-        # Get scene properties
         props = scene.gemini_render if hasattr(scene, 'gemini_render') else None
         if not props or not props.use_style_reference or not props.style_reference_image:
             return None
             
         reference_image = props.style_reference_image
-        print(f"🎨 [GEMINI] Saving reference image: {reference_image.name}")
         
         # Create temporary file
         with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
@@ -108,9 +93,8 @@ def save_reference_image_temp(scene) -> str:
         # Save image using different methods based on image type
         saved_successfully = False
         
-        # Method 1: For images without filepath (generated images) - use pixel data
+        # Method 1: For images without filepath - use pixel data
         if not reference_image.filepath:
-            print("[GEMINI] Saving generated image via pixel data...")
             try:
                 # Get pixel data directly
                 pixels = list(reference_image.pixels)
@@ -142,7 +126,6 @@ def save_reference_image_temp(scene) -> str:
                     
                     img.save(temp_path, 'PNG')
                     saved_successfully = True
-                    print("[GEMINI] Saved via PIL")
                     
                 except ImportError:
                     print("[GEMINI] PIL not available, trying Blender save_render...")
@@ -156,48 +139,37 @@ def save_reference_image_temp(scene) -> str:
                     reference_image.file_format = 'PNG'
                     reference_image.save_render(temp_path)
                     
-                    # Restore original settings
                     reference_image.filepath = original_settings['filepath']
                     reference_image.file_format = original_settings['file_format']
                     saved_successfully = True
-                    print("[GEMINI] Saved via Blender save_render")
                     
             except Exception as e:
                 print(f"[GEMINI] Pixel data method failed: {e}")
         
         # Method 2: For packed images
         elif reference_image.packed_file:
-            print("📦 [GEMINI] Reference image is packed, extracting...")
             try:
                 with open(temp_path, 'wb') as f:
                     f.write(reference_image.packed_file.data)
                 saved_successfully = True
-                print("[GEMINI] Saved from packed data")
             except Exception as e:
                 print(f"[GEMINI] Packed file method failed: {e}")
         
         # Method 3: For images with filepath
         elif reference_image.filepath:
-            print(f"📁 [GEMINI] Copying reference from filepath...")
             try:
                 import shutil
                 abs_path = bpy.path.abspath(reference_image.filepath)
                 if os.path.exists(abs_path):
                     shutil.copy2(abs_path, temp_path)
                     saved_successfully = True
-                    print(f"[GEMINI] Copied from: {abs_path}")
-                else:
-                    print(f"[GEMINI] Reference file not found: {abs_path}")
             except Exception as e:
                 print(f"[GEMINI] Filepath method failed: {e}")
         
         # Check if saving was successful
         if saved_successfully and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-            print(f"[GEMINI] Reference image saved to: {temp_path}")
             return temp_path
         else:
-            print("[GEMINI] Failed to save reference image")
-            # Clean up failed temp file
             try:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
@@ -210,10 +182,8 @@ def save_reference_image_temp(scene) -> str:
         return None
 
 def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_prompt: str = "") -> None:
-    """Load result image into Blender and save to history (thread-safe)"""
-    print(f"🚀 [GEMINI] load_result_image called with user_prompt: '{user_prompt}', image_name: '{image_name}'")
+    """Load result image into Blender and save to history (thread-safe)."""
     def _load_image():
-        print("[GEMINI] Starting _load_image function...")
         try:
             import tempfile
             import os
@@ -231,70 +201,41 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                 img = bpy.data.images.load(temp_path)
                 img.name = image_name
                 
-                # Keep original image for history (don't make copies that lose data)
+                # Keep original image for history
                 permanent_image_for_history = None
-                if user_prompt:  # Only if we need to save to history
+                if user_prompt:
                     import datetime
                     permanent_name = f"AI_Result_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    
-                    # Rename the original loaded image to be our permanent image  
                     img.name = permanent_name
-                    img.pack()  # Pack to save with .blend file
+                    img.pack()
+                    img.use_fake_user = True  # CRITICAL: Prevent garbage collection!
                     permanent_image_for_history = img
-                    print(f"[GEMINI] ORIGINAL image kept for history: {permanent_name}")
-                    print(f"[GEMINI] Original image has_data: {permanent_image_for_history.has_data}, size: {permanent_image_for_history.size}")
+                    print(f"[GEMINI] Saved permanent image for history: {permanent_image_for_history.name}")
                 
-                # Method 1: Try to replace existing Render Result completely
-                print(f"[GEMINI] Loaded image: {img.name}, size: {img.size}, channels: {img.channels}")
-                
-                # Remove existing Render Result if it exists
+                # Create Render Result
                 render_result = bpy.data.images.get('Render Result')
                 if render_result:
-                    print("[GEMINI] Removing existing Render Result")
                     bpy.data.images.remove(render_result)
                 
-                # Create a copy for Render Result display (keep original for history)
                 render_result = img.copy()
                 render_result.name = 'Render Result'
-                print(f"[GEMINI] Created Render Result copy: {render_result.size}")
-                print(f"[GEMINI] Render Result has_data: {render_result.has_data}")
                 
-                # Note: render_result.type is read-only, so we can't set it directly
-                print("📋 [GEMINI] Render Result copy is ready for display")
-                
-                # Force update all Image Editors to show the new Render Result
-                updated_editors = 0
+                # Update Image Editors
                 for area in bpy.context.screen.areas:
                     if area.type == 'IMAGE_EDITOR':
                         for space in area.spaces:
                             if space.type == 'IMAGE_EDITOR':
-                                # Force set the image to our new render result
                                 space.image = render_result
-                                updated_editors += 1
-                                print(f"[GEMINI] Updated Image Editor {updated_editors}")
-                        # Force refresh the area
                         area.tag_redraw()
                 
-                print(f"[GEMINI] Updated {updated_editors} Image Editors")
-                
-                # Also try to update the render view if it exists
                 for area in bpy.context.screen.areas:
                     area.tag_redraw()
                 
-                print(f"[GEMINI] AI result loaded successfully as Render Result")
-                
-                # Show the render result like F12 does - open/switch to render view
-                print("[GEMINI] Opening Render Result view...")
-                
-                # Try different methods to show the result (but ALWAYS continue to history afterward)
+                # Try different methods to show the result
                 try:
-                    # Method 1: Try to create a completely new Blender window
                     try:
-                        print("🪟 [GEMINI] Creating new Blender window...")
                         bpy.ops.wm.window_new()
-                        
-                        # Set the new window to Image Editor
-                        new_window = bpy.context.window_manager.windows[-1]  # Last created window
+                        new_window = bpy.context.window_manager.windows[-1]
                         for area in new_window.screen.areas:
                             if area.type != 'IMAGE_EDITOR':
                                 area.type = 'IMAGE_EDITOR'
@@ -302,19 +243,11 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                                     if space.type == 'IMAGE_EDITOR':
                                         space.image = render_result
                                         area.tag_redraw()
-                                        print("[GEMINI] New window created with render result!")
-                                        break  # Exit spaces loop only
-                                break  # Exit areas loop only
-                                        
-                    except Exception as e1:
-                        print(f"[GEMINI] Could not create new window: {e1}")
-                        
-                        # Method 2: Try to duplicate current area to new window
+                                        break
+                                break
+                    except Exception:
                         try:
-                            print("📱 [GEMINI] Trying area duplication...")
                             bpy.ops.screen.area_dupli('INVOKE_DEFAULT')
-                            
-                            # Find the duplicated area and set it to Image Editor
                             for area in bpy.context.screen.areas:
                                 if area.type == 'EMPTY':
                                     area.type = 'IMAGE_EDITOR'
@@ -322,69 +255,22 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                                         if space.type == 'IMAGE_EDITOR':
                                             space.image = render_result
                                             area.tag_redraw()
-                                            print("[GEMINI] Duplicated area set to show render result")
-                                            break  # Exit spaces loop only
-                                    break  # Exit areas loop only
-                            
-                        except Exception as e2:
-                            print(f"[GEMINI] Could not duplicate area: {e2}")
-                            
-                            # Method 3: SAFE area conversion
-                            try:
-                                print("[GEMINI] Trying to switch SAFE existing area...")
-                                
-                                # SAFE areas to convert (don't touch animation!)
-                                SAFE_AREAS_TO_CONVERT = [
-                                    'TEXT_EDITOR', 'CONSOLE', 'INFO', 'FILE_BROWSER',
-                                ]
-                                
-                                area_converted = False
-                                for area in bpy.context.screen.areas:
-                                    if area.type in SAFE_AREAS_TO_CONVERT:
-                                        old_type = area.type
-                                        area.type = 'IMAGE_EDITOR'
-                                        for space in area.spaces:
-                                            if space.type == 'IMAGE_EDITOR':
-                                                space.image = render_result
-                                                area.tag_redraw()
-                                                print(f"[GEMINI] Safely converted {old_type} to Image Editor")
-                                                area_converted = True
-                                                break  # Exit spaces loop only
-                                        break  # Exit areas loop only
-                                
-                                if not area_converted:
-                                    print("[GEMINI] No SAFE areas found, trying existing Image Editor...")
-                                    
-                                    # Method 4: Use existing Image Editor
-                                    for area in bpy.context.screen.areas:
-                                        if area.type == 'IMAGE_EDITOR':
-                                            for space in area.spaces:
-                                                if space.type == 'IMAGE_EDITOR':
-                                                    space.image = render_result
-                                                    area.tag_redraw()
-                                                    print("[GEMINI] Using existing Image Editor for render result")
-                                                    break  # Exit spaces loop only
-                                            break  # Exit areas loop only
-                                    
-                                    print("💡 [GEMINI] Render result is available as 'Render Result' image in Blender")
-                                    
-                            except Exception as e3:
-                                print(f"[GEMINI] Safe area conversion failed: {e3}")
-                                print("[GEMINI] Render result loaded - access manually via Image Editor")
-                
-                except Exception as e:
-                    print(f"[GEMINI] All window methods failed: {e}")
-                    print("[GEMINI] Render result loaded - access manually via Image Editor")
-                
-                print("[GEMINI] Finished window/editor setup, now starting history save...")
+                                            break
+                                    break
+                        except Exception:
+                            # Use existing Image Editor
+                            for area in bpy.context.screen.areas:
+                                if area.type == 'IMAGE_EDITOR':
+                                    for space in area.spaces:
+                                        if space.type == 'IMAGE_EDITOR':
+                                            space.image = render_result
+                                            area.tag_redraw()
+                                            break
+                                    break
+                except Exception:
+                    pass  # Result still available in Blender images
                 
                 # Add to render history
-                print(f"[GEMINI] Attempting to save to history, user_prompt: '{user_prompt}'")
-                if user_prompt:
-                    print("[GEMINI] User prompt found, proceeding with history save...")
-                else:
-                    print("[GEMINI] User prompt is empty, skipping history save")
-                
                 if user_prompt:
                     try:
                         scene = bpy.context.scene
@@ -399,11 +285,9 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                             history_item = props.render_history.add()
                             history_item.prompt = user_prompt
                             
-                            # Use the PERMANENT image created at the beginning of _load_image
+                            # Use the permanent image created at the beginning
                             if permanent_image_for_history:
                                 history_item.image_name = permanent_image_for_history.name
-                                print(f"[GEMINI] Using pre-created permanent image for history: {permanent_image_for_history.name}")
-                                print(f"[GEMINI] Pre-created image has_data: {permanent_image_for_history.has_data}, size: {permanent_image_for_history.size}")
                             else:
                                 # Fallback - create now (shouldn't happen if user_prompt exists)
                                 import datetime
@@ -413,54 +297,28 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                                     permanent_image.name = permanent_name
                                     permanent_image.pack()
                                     history_item.image_name = permanent_name
-                                    print(f"[GEMINI] Created fallback permanent image: {permanent_name}")
-                                except Exception as e:
-                                    print(f"[GEMINI] Failed to create fallback permanent copy: {e}")
+                                except Exception:
                                     history_item.image_name = render_result.name
-                                    print(f"[GEMINI] Using render result directly as last resort: {render_result.name}")
-                                    
-                            print(f"[GEMINI] History item created: {history_item.prompt[:30]}...")
                             
                             # Save style reference info if used
                             if props.use_style_reference and props.style_reference_image:
                                 history_item.style_reference_used = True
                                 history_item.style_reference_name = props.style_reference_image.name
-                                print(f"[GEMINI] Style reference saved: {props.style_reference_image.name}")
-                                
-                                # NO THUMBNAIL CREATION - style thumbnails removed
                                 history_item.style_reference_thumbnail = ""
-                                print(f"[GEMINI] Style reference linked (no thumbnail created)")
                             else:
                                 history_item.style_reference_used = False
-                                print("[GEMINI] No style reference used for this render")
                             
                             # Add timestamp
                             import datetime
                             history_item.timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            history_item.thumbnail_name = ""
                             
-                            # NO THUMBNAIL CREATION - use the main AI_Result image directly  
-                            history_item.thumbnail_name = ""  # No thumbnail needed
-                            print(f"[GEMINI] No thumbnail created - using main AI_Result image directly")
-                            
-                            # Keep only last 10 renders to avoid bloating blend file
+                            # Keep only last 10 renders
                             while len(props.render_history) > 10:
-                                # Remove oldest entry and its images
                                 oldest = props.render_history[0]
-                                
-                                # Remove main AI_Result image
                                 if oldest.image_name in bpy.data.images:
-                                    old_image = bpy.data.images[oldest.image_name]
-                                    print(f"[GEMINI] Removing old AI_Result image: {oldest.image_name}")
-                                    bpy.data.images.remove(old_image)
-                                
-                                # NO STYLE THUMBNAIL REMOVAL - they don't exist anymore
-                                
+                                    bpy.data.images.remove(bpy.data.images[oldest.image_name])
                                 props.render_history.remove(0)
-                            
-                            print(f"[GEMINI] Added to history: {user_prompt[:50]}... (Total: {len(props.render_history)})")
-                            print(f"[GEMINI] History successfully saved!")
-                        else:
-                            print("[GEMINI] Scene does not have gemini_render property")
                         
                     except Exception as e:
                         print(f"[GEMINI] Failed to save to history: {e}")
@@ -535,12 +393,21 @@ class APIThread(threading.Thread):
             # Check for reference image
             reference_path = save_reference_image_temp(self.scene)
             
-            # Get resolution
+            # Get resolution with aspect ratio from scene
             props = self.scene.gemini_render if hasattr(self.scene, 'gemini_render') else None
-            resolution = int(props.resolution) if props and hasattr(props, 'resolution') else 1024
+            base = int(props.resolution) if props else 1024
+            
+            # Get aspect ratio from scene render settings
+            render = self.scene.render
+            scene_aspect = render.resolution_x / render.resolution_y
+            if scene_aspect >= 1.0:
+                width, height = base, int(base / scene_aspect)
+            else:
+                width, height = int(base * scene_aspect), base
+            print(f"[GEMINI] Using resolution: {width}x{height} (aspect from scene: {render.resolution_x}x{render.resolution_y})")
             
             try:
-                image_data, mime_type = self.api_client.generate_image(self.depth_path, self.user_prompt, reference_path, width=resolution, height=resolution)
+                image_data, mime_type = self.api_client.generate_image(self.depth_path, self.user_prompt, reference_path, width=width, height=height)
                 print(f"[GEMINI] AI response received, image size: {len(image_data)} bytes")
             finally:
                 # Clean up reference temp file
@@ -706,12 +573,18 @@ class FullRenderThread(threading.Thread):
             # Determine if using color render mode
             is_color_render = (render_mode == 'EEVEE')
             
-            # Get resolution
-            resolution = int(props.resolution) if props and hasattr(props, 'resolution') else 1024
-            print(f"[GEMINI] Using resolution: {resolution}x{resolution}")
+            # Get resolution with aspect ratio from scene
+            base = int(props.resolution) if props else 1024
+            render = self.scene.render
+            scene_aspect = render.resolution_x / render.resolution_y
+            if scene_aspect >= 1.0:
+                width, height = base, int(base / scene_aspect)
+            else:
+                width, height = int(base * scene_aspect), base
+            print(f"[GEMINI] Using resolution: {width}x{height} (aspect from scene: {render.resolution_x}x{render.resolution_y})")
             
             try:
-                image_data, mime_type = self.api_client.generate_image(depth_path, self.user_prompt, reference_path, is_color_render, width=resolution, height=resolution)
+                image_data, mime_type = self.api_client.generate_image(depth_path, self.user_prompt, reference_path, is_color_render, width=width, height=height)
                 print(f"[GEMINI] AI response received, image size: {len(image_data)} bytes")
             finally:
                 # Clean up reference temp file

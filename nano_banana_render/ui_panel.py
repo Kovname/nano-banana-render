@@ -52,14 +52,7 @@ class GeminiRenderHistoryItem(PropertyGroup):
 class GeminiRenderProperties(PropertyGroup):
     """Properties for Gemini Render addon stored in scene"""
     
-    # Main properties
-    api_key: StringProperty(
-        name="API Key",
-        description="Google Gemini API Key",
-        default="",
-        subtype='PASSWORD',
-        update=lambda self, context: sync_api_key(self, context)
-    )
+    # Note: API key is NOT stored here for security - use environment variable or addon preferences
     
     prompt: StringProperty(
         name="Prompt", 
@@ -91,14 +84,14 @@ class GeminiRenderProperties(PropertyGroup):
         update=lambda self, context: on_render_mode_change(self, context)
     )
     
-    # Resolution selection
+    # Resolution selection (base size - aspect ratio auto-detected from scene)
     resolution: EnumProperty(
         name="Resolution",
-        description="Choose render resolution",
+        description="AI output resolution (aspect ratio auto-detected from scene/camera)",
         items=[
-            ('1024', "1k (1024x1024)", "Standard square resolution"),
-            ('2048', "2k (2048x2048)", "High resolution"),
-            ('4096', "4k (4096x4096)", "Ultra high resolution"),
+            ('1024', "1K", "Base 1024px (auto aspect ratio)"),
+            ('2048', "2K", "High resolution 2048px"),
+            ('4096', "4K", "Ultra high resolution 4096px"),
         ],
         default='1024',
     )
@@ -196,16 +189,10 @@ class BANANA_PT_render_panel(Panel):
         scene = context.scene
         props = scene.gemini_render
         
-        # Auto-sync API key from preferences if scene key is empty
-        if not props.api_key:
-            try:
-                # Use __package__ to get the correct addon name
-                package_name = __package__ if __package__ else "nano_banana_render"
-                addon_prefs = context.preferences.addons.get(package_name)
-                if addon_prefs and hasattr(addon_prefs.preferences, 'api_key') and addon_prefs.preferences.api_key:
-                    props.api_key = addon_prefs.preferences.api_key
-            except:
-                pass
+        # Import API key functions
+        from . import gemini_api
+        api_key = gemini_api.get_api_key()
+        api_key_status = gemini_api.get_api_key_status()
         
         # Authentication (collapsible)
         box = layout.box()
@@ -215,10 +202,16 @@ class BANANA_PT_render_panel(Panel):
                 toggle=True, icon='TRIA_DOWN' if props.show_auth else 'TRIA_RIGHT')
         
         if props.show_auth:
-            box.prop(props, "api_key", text="")
-            
-            if not props.api_key.strip():
-                box.label(text="Enter API key", icon='ERROR')
+            if api_key_status:
+                box.label(text="API Key configured", icon='CHECKMARK')
+                box.label(text=f"Source: {api_key_status['source']}", icon='INFO')
+            else:
+                box.label(text="No API key found", icon='ERROR')
+                col = box.column(align=True)
+                col.scale_y = 0.8
+                col.label(text="Set GEMINI_API_KEY environment variable, or")
+                col.label(text="enter key in Addon Preferences")
+                box.operator("gemini.open_preferences", text="Open Addon Preferences", icon='PREFERENCES')
         
         # Prompt
         box = layout.box()
@@ -282,9 +275,13 @@ class BANANA_PT_render_panel(Panel):
             box.label(text="Render Mode:", icon='RENDERLAYERS')
             box.prop(props, "render_mode", text="")
             
-            # Resolution selection
+            # Resolution selection (aspect ratio auto-detected)
             box.label(text="Resolution:", icon='FULLSCREEN_ENTER')
             box.prop(props, "resolution", text="")
+            
+            # Show auto-detected dimensions from scene
+            width, height = get_render_dimensions_from_scene(context)
+            box.label(text=f"Output: {width}x{height} (auto from scene)", icon='INFO')
             
             # Show mist settings only if depth mode is selected
             if props.render_mode == 'DEPTH':
@@ -342,13 +339,13 @@ class BANANA_PT_render_panel(Panel):
             row.operator("gemini.stop_render", text="Stop Render", icon='CANCEL')
             
         
-        # Quick help
-        if not props.api_key.strip():
+        # Quick help (only show if no API key)
+        if not api_key:
             box = layout.box()
             box.label(text="Quick Start:", icon='HELP')
             col = box.column(align=True)
             col.label(text="1. Get API key from Google AI Studio")
-            col.label(text="2. Enter it above")  
+            col.label(text="2. Set GEMINI_API_KEY env var or use Preferences")  
             col.label(text="3. Add objects and camera")
             col.label(text="4. Click AI Render!")
 
@@ -398,7 +395,8 @@ class BANANA_PT_history_panel(Panel):
             btn_row.scale_y = 1.2
             
             # View photo button (takes most space)
-            view_btn = btn_row.operator("gemini.open_history_image", text="👁️ View Photo", icon='ZOOM_IN')
+            # Use the correct operator name from operators.py
+            view_btn = btn_row.operator("gemini.load_history", text="👁️ View Photo", icon='ZOOM_IN')
             view_btn.history_index = actual_index
             
             # Gear button (small, just icon, right side)
@@ -416,113 +414,113 @@ class BANANA_PT_history_panel(Panel):
                 layout.separator()
 
 
-# Update functions
 def update_mist_settings(self, context):
-    """Update world mist settings when UI values change"""
+    """Update world mist settings when UI values change."""
     try:
-        import bpy
-        
         if not context.scene.world:
-            print("⚠️ [GEMINI] No world in scene for mist settings")
             return
         
         world = context.scene.world
-        
-        # Values are already in meters
         mist_start_m = self.mist_start
         mist_depth_m = self.mist_depth
         mist_falloff = self.mist_falloff if hasattr(self, 'mist_falloff') else 'LINEAR'
         
-        # Use Blender 4.5+ API if available
         if hasattr(world, 'mist_settings'):
             world.mist_settings.use_mist = True
             world.mist_settings.start = mist_start_m
             world.mist_settings.depth = mist_depth_m
-            world.mist_settings.falloff = mist_falloff  # Use selected falloff
-            print(f"✅ [GEMINI] Mist settings updated: start={mist_start_m}m, depth={mist_depth_m}m, falloff={mist_falloff}")
-        else:
-            # Fallback for older Blender versions
-            if hasattr(world, 'use_mist'):
-                world.use_mist = True
-                world.mist_start = mist_start_m
-                world.mist_depth = mist_depth_m
-                world.mist_falloff = mist_falloff  # Use selected falloff
-                print(f"✅ [GEMINI] Legacy mist settings updated: start={mist_start_m}m, depth={mist_depth_m}m, falloff={mist_falloff}")
+            world.mist_settings.falloff = mist_falloff
+        elif hasattr(world, 'use_mist'):
+            world.use_mist = True
+            world.mist_start = mist_start_m
+            world.mist_depth = mist_depth_m
+            world.mist_falloff = mist_falloff
         
     except Exception as e:
-        print(f"⚠️ [GEMINI] Failed to update mist settings: {e}")
-
+        print(f"[GEMINI] Failed to update mist settings: {e}")
 
 def toggle_mist_preview(self, context):
-    """Toggle mist preview in 3D viewport"""
+    """Toggle mist preview in 3D viewport."""
     try:
-        import bpy
-        
-        print(f"🌫️ [GEMINI] Toggling mist preview: {self.mist_preview}")
-        
-        # Update world mist settings first
         update_mist_settings(self, context)
         
-        # Find 3D viewport and set shading
         for area in context.screen.areas:
             if area.type == 'VIEW_3D':
                 for space in area.spaces:
                     if space.type == 'VIEW_3D':
                         if self.mist_preview:
-                            # Enable mist preview
                             space.shading.type = 'MATERIAL'
                             if hasattr(space.shading, 'render_pass'):
                                 space.shading.render_pass = 'MIST'
-                            print("✅ [GEMINI] Mist preview enabled in viewport")
                         else:
-                            # Disable mist preview - return to normal shading
                             if hasattr(space.shading, 'render_pass'):
                                 space.shading.render_pass = 'COMBINED'
-                            space.shading.type = 'MATERIAL'  # Keep material preview
-                            print("✅ [GEMINI] Mist preview disabled in viewport")
-                        
-                        # Force redraw
+                            space.shading.type = 'MATERIAL'
                         area.tag_redraw()
                         return
         
-        print("⚠️ [GEMINI] No 3D viewport found for mist preview")
-        
     except Exception as e:
-        print(f"⚠️ [GEMINI] Failed to toggle mist preview: {e}")
-
+        print(f"[GEMINI] Failed to toggle mist preview: {e}")
 
 def on_render_mode_change(self, context):
-    """Handle render mode change - disable mist preview for Regular Render"""
+    """Handle render mode change - disable mist preview for Regular Render."""
     try:
-        import bpy
-        
-        # If switching to Regular Render and mist preview is enabled, disable it
         if self.render_mode == 'EEVEE' and self.mist_preview:
-            print("[GEMINI] Switching to Regular Render - disabling mist preview")
-            self.mist_preview = False  # This will trigger toggle_mist_preview
-            
-    except Exception as e:
-        print(f"[GEMINI] Error in render mode change: {e}")
+            self.mist_preview = False
+    except Exception:
+        pass
 
 
-def sync_api_key(self, context):
-    """Sync API key between scene properties and addon preferences"""
+def get_render_dimensions_from_scene(context) -> tuple:
+    """Get render dimensions from scene settings with base resolution scaling.
+    
+    Auto-detects aspect ratio from Blender's render settings.
+    Scales to match the addon's resolution setting while preserving aspect ratio.
+    """
     try:
-        import bpy
+        scene = context.scene
+        props = scene.gemini_render if hasattr(scene, 'gemini_render') else None
+        base = int(props.resolution) if props else 1024
         
-        # Get addon preferences
-        package_name = __package__ if __package__ else "nano_banana_render"
-        addon_prefs = context.preferences.addons.get(package_name)
+        # Get scene render resolution
+        render = scene.render
+        scene_width = render.resolution_x
+        scene_height = render.resolution_y
         
-        if addon_prefs and hasattr(addon_prefs.preferences, 'api_key'):
-            # Sync scene -> preferences
-            if self.api_key and self.api_key != addon_prefs.preferences.api_key:
-                addon_prefs.preferences.api_key = self.api_key
-                print(f"✅ [GEMINI] API key synced to preferences")
-            # Sync preferences -> scene (if scene is empty)
-            elif not self.api_key and addon_prefs.preferences.api_key:
-                self.api_key = addon_prefs.preferences.api_key
-                print(f"✅ [GEMINI] API key synced from preferences")
+        # Calculate aspect ratio from scene
+        aspect = scene_width / scene_height
         
-    except Exception as e:
-        print(f"⚠️ [GEMINI] Failed to sync API key: {e}")
+        # Scale to base resolution while preserving aspect ratio
+        if aspect >= 1.0:
+            # Landscape or square
+            width = base
+            height = int(base / aspect)
+        else:
+            # Portrait
+            height = base
+            width = int(base * aspect)
+        
+        return (width, height)
+    except:
+        return (1024, 1024)
+
+
+def get_scene_aspect_ratio_string(context) -> str:
+    """Get the closest supported aspect ratio string for Gemini API."""
+    try:
+        scene = context.scene
+        render = scene.render
+        aspect = render.resolution_x / render.resolution_y
+        
+        # Map to closest supported Gemini aspect ratio
+        ratios = {
+            "1:1": 1.0,
+            "16:9": 16/9,
+            "9:16": 9/16,
+            "4:3": 4/3,
+            "3:2": 3/2
+        }
+        closest = min(ratios.items(), key=lambda x: abs(x[1] - aspect))
+        return closest[0]
+    except:
+        return "1:1"

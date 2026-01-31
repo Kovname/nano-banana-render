@@ -93,7 +93,7 @@ class DepthRenderer:
             original_use_nodes = scene.use_nodes
             
             try:
-                print("🌫️ [GEMINI] Setting up Mist Pass for depth rendering...")
+                print("[GEMINI] Setting up Mist Pass for depth rendering...")
                 
                 # Setup World mist settings
                 world = scene.world
@@ -101,7 +101,7 @@ class DepthRenderer:
                     # Create world if it doesn't exist
                     world = bpy.data.worlds.new("TempWorld")
                     scene.world = world
-                    print("🌍 [GEMINI] Created temporary world")
+                    print("[GEMINI] Created temporary world")
                 
                 # Store original world settings (Blender 4.5+ uses mist_settings)
                 if hasattr(world, 'mist_settings') and world.mist_settings:
@@ -117,7 +117,7 @@ class DepthRenderer:
                     mist_settings.depth = mist_depth  # Already in meters 
                     mist_settings.falloff = mist_falloff  # Use user-selected falloff
                     
-                    print(f"🌫️ [GEMINI] Mist settings (4.5+ API): start={mist_settings.start}m, depth={mist_settings.depth}m, falloff={mist_falloff}")
+                    print(f"[GEMINI] Mist settings (4.5+ API): start={mist_settings.start}m, depth={mist_settings.depth}m, falloff={mist_falloff}")
                 else:
                     # Fallback for older Blender versions
                     original_use_mist = getattr(world, 'use_mist', False)
@@ -131,7 +131,7 @@ class DepthRenderer:
                     setattr(world, 'mist_depth', mist_depth)  # Already in meters
                     setattr(world, 'mist_falloff', mist_falloff)  # Use user-selected falloff
                     
-                    print(f"🌫️ [GEMINI] Mist settings (old API): start={mist_start}m, depth={mist_depth}m, falloff={mist_falloff}")
+                    print(f"[GEMINI] Mist settings (legacy API): start={mist_start}m, depth={mist_depth}m, falloff={mist_falloff}")
                 
                 # Use Eevee Next for fast rendering with Mist Pass support (Blender 4.5+)
                 available_engines = ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE', 'CYCLES', 'BLENDER_WORKBENCH']
@@ -141,7 +141,7 @@ class DepthRenderer:
                     try:
                         scene.render.engine = engine
                         selected_engine = engine
-                        print(f"✅ [GEMINI] Using render engine: {engine}")
+                        print(f"[GEMINI] Using render engine: {engine}")
                         break
                     except TypeError:
                         continue
@@ -157,18 +157,16 @@ class DepthRenderer:
                     
                     if hasattr(view_layer, 'use_pass_mist'):
                         view_layer.use_pass_mist = True
-                        print("✅ [GEMINI] Mist pass enabled in view layer")
+                        print("[GEMINI] Mist pass enabled in view layer")
                         
-                        # CRITICAL: Disable Combined pass for PURE mist render
+                        # Disable Combined pass for pure mist render
                         if hasattr(view_layer, 'use_pass_combined'):
                             view_layer.use_pass_combined = False
-                            print("🚫 [GEMINI] Combined pass DISABLED - pure mist only!")
-                        else:
-                            print("⚠️ [GEMINI] Cannot disable combined pass - will use compositor")
+                            print("[GEMINI] Combined pass disabled - pure mist only")
                     else:
-                        print("⚠️ [GEMINI] View layer found but no mist pass support")
+                        print("[GEMINI] Warning: View layer found but no mist pass support")
                 else:
-                    print("⚠️ [GEMINI] No view layer found, continuing without mist pass")
+                    print("[GEMINI] Warning: No view layer found, continuing without mist pass")
                     original_use_pass_mist = False
                     original_use_pass_combined = True
                 
@@ -201,7 +199,7 @@ class DepthRenderer:
                             if original_mist_falloff is not None:
                                 setattr(scene.world, 'mist_falloff', original_mist_falloff)
                         except AttributeError:
-                            print("⚠️ [GEMINI] Could not restore old mist settings (modern Blender API)")
+                            pass  # Legacy API not available in modern Blender
                 
                 # Restore view layer settings
                 view_layer = self._get_active_view_layer(scene)
@@ -221,10 +219,10 @@ class DepthRenderer:
                 # Restore render engine
                 scene.render.engine = original_render_engine
                 
-                print("🔄 [GEMINI] World and render settings restored")
+                print("[GEMINI] World and render settings restored")
                 
         except Exception as e:
-            print(f"💥 [GEMINI] Mist depth render error: {str(e)}")
+            print(f"[GEMINI] Mist depth render error: {str(e)}")
             # CRITICAL: Only cleanup on error!
             self.cleanup_temp_files()
             if isinstance(e, DepthRenderError):
@@ -232,8 +230,7 @@ class DepthRenderer:
             raise DepthRenderError(f"Failed to render mist depth map: {str(e)}")
     
     def _get_active_view_layer(self, scene):
-        """Get active view layer with fallback for different Blender versions"""
-        import bpy
+        """Get active view layer with fallback for different Blender versions."""
         
         # Method 1: Try context (preferred in 4.5+)
         try:
@@ -257,16 +254,14 @@ class DepthRenderer:
             pass
             
         # Method 4: Create view layer if none exist (extreme fallback)
-        print("⚠️ [GEMINI] No view layer found, using scene fallback")
+        print("[GEMINI] Warning: No view layer found, using scene fallback")
         return None
     
     def _render_mist_only(self, scene, temp_dir: str, render_engine: str, 
                          original_use_pass_mist: bool, original_use_pass_combined: bool) -> str:
-        """Render only mist pass using compositor setup"""
+        """Render only mist pass using compositor setup."""
         try:
-            import bpy
-            
-            print("🎭 [GEMINI] Setting up mist-only render with compositor...")
+            print("[GEMINI] Setting up mist-only render with compositor...")
             
             # Store original settings
             original_filepath = scene.render.filepath
@@ -298,7 +293,7 @@ class DepthRenderer:
                 # Connect mist pass to file output
                 scene.node_tree.links.new(render_layers.outputs['Mist'], file_output.inputs[0])
                 
-                print("🔗 [GEMINI] Compositor nodes setup: RenderLayers → Mist → FileOutput")
+                print("[GEMINI] Compositor nodes setup: RenderLayers -> Mist -> FileOutput")
                 
                 # Fast render settings
                 if render_engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
@@ -310,7 +305,7 @@ class DepthRenderer:
                 # Set temporary render output (compositor will handle mist output)
                 scene.render.filepath = os.path.join(temp_dir, "temp_render")
                 
-                print("🏃 [GEMINI] Starting mist-only render...")
+                print("[GEMINI] Starting mist-only render...")
                 
                 # Execute render
                 bpy.ops.render.render(write_still=True)
@@ -326,11 +321,11 @@ class DepthRenderer:
                 for path in mist_files:
                     if os.path.exists(path):
                         actual_mist_path = path
-                        print(f"✅ [GEMINI] Found mist output: {path}")
+                        print(f"[GEMINI] Found mist output: {path}")
                         break
                 
                 if actual_mist_path:
-                    print(f"🌫️ [GEMINI] Mist-only render completed: {actual_mist_path}")
+                    print(f"[GEMINI] Mist-only render completed: {actual_mist_path}")
                     return actual_mist_path
                 else:
                     raise DepthRenderError("Mist output file not found after render")
@@ -346,11 +341,9 @@ class DepthRenderer:
             raise DepthRenderError(f"Mist-only render failed: {str(e)}")
     
     def _render_and_extract_mist(self, scene, temp_dir: str, render_engine: str) -> str:
-        """Simple render and extract mist pass - safer for background threads"""
+        """Simple render and extract mist pass - safer for background threads."""
         try:
-            import bpy
-            
-            print("⚡ [GEMINI] Simple render with mist extraction (no compositor)...")
+            print("[GEMINI] Simple render with mist extraction (no compositor)...")
             
             # Store original settings
             original_filepath = scene.render.filepath
@@ -372,12 +365,12 @@ class DepthRenderer:
                 # Set temporary render output
                 scene.render.filepath = os.path.join(temp_dir, "temp_render")
                 
-                print("🏃 [GEMINI] Starting simple render for mist extraction...")
+                print("[GEMINI] Starting simple render for mist extraction...")
                 
                 # Execute render
                 bpy.ops.render.render(write_still=True)
                 
-                print("🔍 [GEMINI] Extracting mist pass from render result (Combined pass disabled)...")
+                print("[GEMINI] Extracting mist pass from render result (Combined pass disabled)...")
                 
                 # Get render result (should contain ONLY mist data now)
                 render_result = bpy.data.images.get('Render Result')
@@ -385,11 +378,11 @@ class DepthRenderer:
                     raise DepthRenderError("No render result found")
                 
                 # Since Combined pass is disabled, Render Result should contain only mist
-                print("📸 [GEMINI] Saving mist-only render result...")
+                print("[GEMINI] Saving mist-only render result...")
                 render_result.save_render(filepath=mist_output_path)
                 
                 if os.path.exists(mist_output_path):
-                    print(f"✅ [GEMINI] Mist-only render saved: {mist_output_path}")
+                    print(f"[GEMINI] Mist-only render saved: {mist_output_path}")
                     return mist_output_path
                 else:
                     raise DepthRenderError("Failed to save mist render result")
@@ -612,11 +605,9 @@ class DepthRenderer:
             raise DepthRenderError(f"Viewport mist render failed: {str(e)}")
     
     def _render_camera_with_mist_compositor(self, scene, temp_dir: str, render_engine: str, mist_falloff: str = 'LINEAR') -> str:
-        """Render from camera with compositor setup to extract PURE mist pass"""
+        """Render from camera with compositor setup to extract pure mist pass."""
         try:
-            import bpy
-            
-            print("🎭 [GEMINI] Setting up camera-based PURE mist render with compositor...")
+            print("[GEMINI] Setting up camera-based pure mist render with compositor...")
             
             # Store original render settings
             original_filepath = scene.render.filepath
@@ -638,9 +629,9 @@ class DepthRenderer:
                 original_samples = None
                 
                 # Use full quality settings 
-                print("⚡ [GEMINI] Using full quality render settings for PURE mist extraction...")
+                print("[GEMINI] Using full quality render settings for pure mist extraction...")
                 scene.render.resolution_percentage = 100
-                print(f"📏 [GEMINI] Using full scene resolution: {scene.render.resolution_x}x{scene.render.resolution_y}")
+                print(f"[GEMINI] Using full scene resolution: {scene.render.resolution_x}x{scene.render.resolution_y}")
                 
                 # Use good quality samples for proper mist
                 if scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
@@ -648,7 +639,7 @@ class DepthRenderer:
                         if hasattr(scene, 'eevee'):
                             original_samples = scene.eevee.taa_render_samples
                             scene.eevee.taa_render_samples = max(64, original_samples)
-                            print(f"⚡ [GEMINI] Eevee samples set to {scene.eevee.taa_render_samples} for quality mist")
+                            print(f"[GEMINI] Eevee samples set to {scene.eevee.taa_render_samples} for quality mist")
                     except:
                         pass
                 elif scene.render.engine == 'CYCLES':
@@ -656,12 +647,12 @@ class DepthRenderer:
                         if hasattr(scene, 'cycles'):
                             original_samples = scene.cycles.samples
                             scene.cycles.samples = max(128, original_samples)
-                            print(f"⚡ [GEMINI] Cycles samples set to {scene.cycles.samples} for quality mist")
+                            print(f"[GEMINI] Cycles samples set to {scene.cycles.samples} for quality mist")
                     except:
                         pass
                 
                 # Setup compositor for PURE mist extraction
-                print("🔗 [GEMINI] Setting up compositor for PURE mist extraction...")
+                print("[GEMINI] Setting up compositor for pure mist extraction...")
                 scene.use_nodes = True
                 
                 # Store original nodes for restoration
@@ -688,20 +679,20 @@ class DepthRenderer:
                 file_output.format.color_mode = 'BW'  # Black and white for depth
                 file_output.format.color_depth = '16'  # 16-bit for smooth gradation (not 8-bit)
                 
-                print("📸 [GEMINI] File output set to 16-bit BW PNG for smooth mist gradation")
+                print("[GEMINI] File output set to 16-bit BW PNG for smooth mist gradation")
                 
                 # Connect ONLY mist pass to output (no combined!)
                 if 'Mist' in render_layers.outputs:
                     scene.node_tree.links.new(render_layers.outputs['Mist'], file_output.inputs[0])
-                    print("✅ [GEMINI] Connected PURE Mist pass to file output")
+                    print("[GEMINI] Connected pure Mist pass to file output")
                 else:
-                    print("⚠️ [GEMINI] Mist output not found in render layers")
+                    print("[GEMINI] Warning: Mist output not found in render layers")
                     raise DepthRenderError("Mist pass not available in render layers")
                 
                 # Set render output (compositor will handle mist file, no temp render needed)
                 scene.render.filepath = os.path.join(temp_dir, "no_temp_render")
                 
-                print("🎬 [GEMINI] Starting camera render for PURE mist extraction (compositor only)...")
+                print("[GEMINI] Starting camera render for pure mist extraction (compositor only)...")
                 
                 # Execute camera render
                 render_success = False
@@ -709,7 +700,7 @@ class DepthRenderer:
                 def _do_mist_render():
                     nonlocal render_success
                     try:
-                        print("🎬 [GEMINI] Executing camera render with mist compositor (no temp file)...")
+                        print("[GEMINI] Executing camera render with mist compositor...")
                         import time
                         start_time = time.time()
                         # Render without saving main render - compositor will handle mist output
@@ -717,9 +708,9 @@ class DepthRenderer:
                         end_time = time.time()
                         
                         render_success = True
-                        print(f"✅ [GEMINI] PURE mist render completed in {end_time - start_time:.1f}s (no temp file)")
+                        print(f"[GEMINI] Pure mist render completed in {end_time - start_time:.1f}s")
                     except Exception as e:
-                        print(f"💥 [GEMINI] Mist render error: {e}")
+                        print(f"[GEMINI] Mist render error: {e}")
                         render_success = False
                 
                 # Execute in main thread if needed
@@ -732,7 +723,7 @@ class DepthRenderer:
                     _do_mist_render()
                 
                 if not render_success:
-                    raise DepthRenderError("PURE mist render failed")
+                    raise DepthRenderError("Pure mist render failed")
                 
                 # Find the mist output file from compositor
                 # Blender may use different numbering: 0000, 0001, 0010, etc.
@@ -746,7 +737,7 @@ class DepthRenderer:
                 if mist_files:
                     # Use the first found file (or the most recent if multiple)
                     actual_mist_path = mist_files[0]
-                    print(f"✅ [GEMINI] Found PURE mist file: {actual_mist_path}")
+                    print(f"[GEMINI] Found pure mist file: {actual_mist_path}")
                 else:
                     # Fallback to specific names
                     possible_mist_files = [
@@ -759,20 +750,20 @@ class DepthRenderer:
                     for path in possible_mist_files:
                         if os.path.exists(path):
                             actual_mist_path = path
-                            print(f"✅ [GEMINI] Found PURE mist file: {path}")
+                            print(f"[GEMINI] Found pure mist file: {path}")
                             break
                 
                 if actual_mist_path:
-                    print(f"🌫️ [GEMINI] PURE mist render completed: {actual_mist_path}")
+                    print(f"[GEMINI] Pure mist render completed: {actual_mist_path}")
                     return actual_mist_path
                 else:
                     # Debug: list all files in temp_dir
                     try:
                         all_files = os.listdir(temp_dir)
-                        print(f"🔍 [GEMINI] Files in temp directory: {all_files}")
+                        print(f"[GEMINI] Files in temp directory: {all_files}")
                     except:
                         pass
-                    raise DepthRenderError("PURE mist output file not found after render")
+                    raise DepthRenderError("Pure mist output file not found after render")
                 
             finally:
                 # Restore all render settings
@@ -804,17 +795,15 @@ class DepthRenderer:
                     scene.node_tree.nodes.clear()
                     # Note: Full node restoration would be complex, keeping it simple
                 
-                print("🔄 [GEMINI] All render settings and compositor restored")
+                print("[GEMINI] All render settings and compositor restored")
                     
         except Exception as e:
-            raise DepthRenderError(f"PURE mist camera render failed: {str(e)}")
+            raise DepthRenderError(f"Pure mist camera render failed: {str(e)}")
     
     def _render_camera_mist_pass(self, scene, temp_dir: str, render_engine: str) -> str:
-        """Render from camera with Mist pass - TRUE depth map"""
+        """Render from camera with Mist pass for true depth map."""
         try:
-            import bpy
-            
-            print("📷 [GEMINI] Setting up camera render with Mist pass...")
+            print("[GEMINI] Setting up camera render with Mist pass...")
             
             # Store original render settings
             original_filepath = scene.render.filepath
@@ -833,40 +822,26 @@ class DepthRenderer:
                 original_resolution_percentage = scene.render.resolution_percentage
                 original_samples = None
                 
-                # Use high quality render settings for proper depth map
-                print("⚡ [GEMINI] Using high quality render settings for proper depth map...")
-                
-                # Use original resolution for high quality depth maps
-                print(f"📏 [GEMINI] Using full scene resolution: {scene.render.resolution_x}x{scene.render.resolution_y}")
-                
-                # Keep resolution percentage at 100% for full quality  
+                # Use high quality render settings for depth maps
                 scene.render.resolution_percentage = 100
-                print(f"📊 [GEMINI] Resolution percentage set to {scene.render.resolution_percentage}% (full quality)")
                 
                 # Use good quality samples for proper depth maps
                 if scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                     try:
                         if hasattr(scene, 'eevee'):
                             original_samples = scene.eevee.taa_render_samples
-                            # Use reasonable samples for good quality depth
-                            scene.eevee.taa_render_samples = max(64, original_samples)  # At least 64 samples
-                            print(f"⚡ [GEMINI] Eevee samples set to {scene.eevee.taa_render_samples} (was {original_samples}) for quality depth")
+                            scene.eevee.taa_render_samples = max(64, original_samples)
                     except:
                         pass
                 elif scene.render.engine == 'CYCLES':
                     try:
                         if hasattr(scene, 'cycles'):
                             original_samples = scene.cycles.samples
-                            # Use reasonable samples for Cycles depth
-                            scene.cycles.samples = max(128, original_samples)  # At least 128 samples  
-                            print(f"⚡ [GEMINI] Cycles samples set to {scene.cycles.samples} (was {original_samples}) for quality depth")
+                            scene.cycles.samples = max(128, original_samples)
                     except:
                         pass
                 
-                # Set render output  
                 scene.render.filepath = os.path.join(temp_dir, "camera_mist")
-                
-                print("🎬 [GEMINI] Starting camera render with mist pass...")
                 
                 # Store render result for main thread execution
                 render_success = False
@@ -874,21 +849,14 @@ class DepthRenderer:
                 def _do_camera_render():
                     nonlocal render_success
                     try:
-                        print("🎬 [GEMINI] About to start bpy.ops.render.render()...")
-                        print(f"📏 [GEMINI] Render resolution: {scene.render.resolution_x}x{scene.render.resolution_y}")
-                        print(f"🎮 [GEMINI] Render engine: {scene.render.engine}")
-                        print(f"📁 [GEMINI] Output path: {scene.render.filepath}")
-                        
-                        # Execute camera render in main thread  
                         import time
                         start_time = time.time()
                         bpy.ops.render.render(write_still=True)
                         end_time = time.time()
-                        
                         render_success = True
-                        print(f"✅ [GEMINI] Camera render executed successfully in {end_time - start_time:.1f}s")
+                        print(f"[GEMINI] Camera render completed in {end_time - start_time:.1f}s")
                     except Exception as e:
-                        print(f"💥 [GEMINI] Camera render error: {e}")
+                        print(f"[GEMINI] Camera render error: {e}")
                         render_success = False
                 
                 # Execute in main thread if we're in background
@@ -902,8 +870,7 @@ class DepthRenderer:
                     _do_camera_render()
                 
                 if not render_success:
-                    print("⚠️ [GEMINI] Camera render failed, trying fallback method...")
-                    # Fallback to old method if camera render fails
+                    print("[GEMINI] Camera render failed, trying fallback method...")
                     return self._render_and_extract_mist(scene, temp_dir, render_engine)
                 
                 # Find output file
@@ -920,14 +887,14 @@ class DepthRenderer:
                         break
                 
                 if actual_path:
-                    print(f"✅ [GEMINI] Camera mist render completed: {actual_path}")
+                    print(f"[GEMINI] Camera mist render completed: {actual_path}")
                     return actual_path
                 else:
                     # Get render result as fallback
                     render_result = bpy.data.images.get('Viewer Node') or bpy.data.images.get('Render Result')
                     if render_result:
                         render_result.save_render(filepath=mist_output_path)
-                        print(f"✅ [GEMINI] Mist extracted from render result: {mist_output_path}")
+                        print(f"[GEMINI] Mist extracted from render result: {mist_output_path}")
                         return mist_output_path
                     else:
                         raise DepthRenderError("No camera render output found")
@@ -954,7 +921,7 @@ class DepthRenderer:
                         except:
                             pass
                 
-                print("🔄 [GEMINI] All render settings restored")
+                print("[GEMINI] Render settings restored")
                     
         except Exception as e:
             raise DepthRenderError(f"Camera mist render failed: {str(e)}")
@@ -1132,8 +1099,22 @@ class DepthRenderer:
             try:
                 print("[GEMINI] Setting up regular render...")
                 
-                # Keep current engine or use Eevee Next if available
-                # In Blender 4.5+, only BLENDER_EEVEE_NEXT exists (not BLENDER_EEVEE)
+                # Detect available Eevee engine (Blender 5.0 uses BLENDER_EEVEE_NEXT, 4.5 uses BLENDER_EEVEE)
+                import bpy
+                available_eevee = None
+                for engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
+                    try:
+                        # Test if engine exists by checking enum items
+                        if engine in [e.identifier for e in bpy.types.RenderSettings.bl_rna.properties['engine'].enum_items]:
+                            available_eevee = engine
+                            break
+                    except:
+                        continue
+                
+                if not available_eevee:
+                    available_eevee = 'BLENDER_EEVEE'  # Fallback
+                
+                # Keep current engine or use available Eevee
                 if scene.render.engine == 'CYCLES':
                     print("[GEMINI] Using CYCLES (current engine)")
                     # Store Cycles samples
@@ -1143,18 +1124,18 @@ class DepthRenderer:
                         if scene.cycles.samples < 64:
                             scene.cycles.samples = 64
                             print(f"[GEMINI] Increased Cycles samples to 64 for quality")
-                elif scene.render.engine == 'BLENDER_EEVEE_NEXT':
-                    print("[GEMINI] Using BLENDER_EEVEE_NEXT (current engine)")
-                    # Ensure good quality for Eevee Next
+                elif scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
+                    print(f"[GEMINI] Using {scene.render.engine} (current engine)")
+                    # Ensure good quality for Eevee
                     if hasattr(scene.eevee, 'taa_render_samples'):
                         original_samples = scene.eevee.taa_render_samples
                         if scene.eevee.taa_render_samples < 64:
                             scene.eevee.taa_render_samples = 64
                             print(f"[GEMINI] Increased Eevee samples to 64 for quality")
                 else:
-                    # Force Eevee Next for Blender 4.5+
-                    scene.render.engine = 'BLENDER_EEVEE_NEXT'
-                    print("[GEMINI] Switched to BLENDER_EEVEE_NEXT")
+                    # Switch to available Eevee engine
+                    scene.render.engine = available_eevee
+                    print(f"[GEMINI] Switched to {available_eevee}")
                     
                     # Ensure good quality
                     if hasattr(scene.eevee, 'taa_render_samples'):

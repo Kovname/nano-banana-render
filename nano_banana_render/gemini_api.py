@@ -1,6 +1,4 @@
-"""
-Gemini API integration for image generation using official Python SDK
-"""
+"""Gemini API integration for image generation using official Python SDK"""
 
 import os
 from typing import Optional, Tuple
@@ -10,21 +8,15 @@ from io import BytesIO
 try:
     from PIL import Image
     PIL_AVAILABLE = True
-    print("✅ [GEMINI] PIL (Pillow) available")
 except ImportError:
-    print("⚠️ [GEMINI] PIL not installed - some features will use fallback")
     PIL_AVAILABLE = False
 
-# Try importing official Google GenAI SDK
 try:
     from google import genai
     from google.genai import types
     GENAI_AVAILABLE = True
-    print("✅ [GEMINI] Official google-genai SDK available")
 except ImportError:
-    print("⚠️ [GEMINI] google-genai not installed, using fallback REST API")
     GENAI_AVAILABLE = False
-    # Fallback to REST API
     import requests
     import json
     import base64
@@ -37,25 +29,20 @@ class GeminiAPI:
     """Client for Google Gemini API with official SDK"""
     
     def __init__(self, api_key: str):
+        """Initialize Gemini API client with SDK or REST fallback."""
         self.api_key = api_key
         
         if GENAI_AVAILABLE and PIL_AVAILABLE:
-            print("🚀 [GEMINI] Using official Google GenAI SDK")
             try:
-                # Configure the official client
                 genai.configure(api_key=api_key)
                 self.client = genai.Client()
                 self.model = "gemini-3-pro-image-preview"
                 self.use_sdk = True
             except Exception as e:
-                print(f"⚠️ [GEMINI] SDK setup failed: {e}, falling back to REST")
+                print(f"[GEMINI] SDK setup failed: {e}, falling back to REST")
                 self.use_sdk = False
                 self._setup_rest_fallback()
         else:
-            if not GENAI_AVAILABLE:
-                print("🔄 [GEMINI] google-genai SDK not available, using REST API fallback")
-            elif not PIL_AVAILABLE:
-                print("🔄 [GEMINI] PIL not available, using REST API fallback (SDK requires PIL)")
             self.use_sdk = False
             self._setup_rest_fallback()
     
@@ -65,158 +52,103 @@ class GeminiAPI:
         self.model = "models/gemini-3-pro-image-preview"
         
     def _build_prompt(self, user_prompt: str, has_reference: bool = False, is_color_render: bool = False) -> str:
-        """Build complete prompt with correct image order and render mode"""
+        """Build complete prompt using structured JSON schema for token efficiency."""
+        import json
         
-        # СТАРЫЙ ПРОМПТ ДЛЯ DEPTH MAP (MIST) - работал лучше!
+        # DEPTH MAP MODE (MIST)
         if not is_color_render:
             if has_reference:
-                base_prompt = (
-                    "You are receiving TWO images with different purposes:\n\n"
-                    
-                    "IMAGE 1 (Style Reference):\n"
-                    "- Use ONLY for: color palette, material textures, lighting mood, surface details\n"
-                    "- DO NOT copy: composition, object placement, camera angle\n"
-                    "- Extract: visual aesthetics, aspect ratio\n\n"
-                    
-                    "IMAGE 2 (Depth Map):\n"
-                    "- Black and white gradient representing depth\n"
-                    "- White = closest objects, Black = farthest objects\n"
-                    "- Use for: scene composition, object placement, 3D structure\n"
-                    "- This depth map shows the spatial layout\n\n"
-                    
-                    "YOUR TASK:\n"
-                    "1. Understand 3D scene structure from depth map (IMAGE 2)\n"
-                    "2. Apply visual style from reference (IMAGE 1) to that structure\n"
-                    "3. Create photorealistic render combining: reference style + depth map geometry\n"
-                    "4. Match aspect ratio of reference image\n\n"
-                    
-                    "USER PROMPT (THE SUPREME COMMAND):\n"
-                    "- The User Prompt below OVERRIDES everything else for CONTENT decisions.\n"
-                    "- If user says 'make it red', MAKE IT RED, even if Reference is blue.\n"
-                    "- Reference Image is for STYLE only. User Prompt is for CONTENT.\n"
-                    "- CONFLICT RESOLUTION: User Prompt > Reference Image Style > Depth Map\n"
-                )
+                prompt_schema = {
+                    "role": "depth_to_render_with_style",
+                    "objective": "Generate photorealistic render from depth map + style reference",
+                    "inputs": {
+                        "image_1": {"type": "style_reference", "use_for": ["colors", "materials", "lighting", "textures"], "ignore": ["composition", "objects"]},
+                        "image_2": {"type": "depth_map", "format": "grayscale", "white": "near", "black": "far", "use_for": ["geometry", "layout", "3d_structure"]}
+                    },
+                    "execution_steps": [
+                        "Parse depth map -> understand 3D scene structure",
+                        "Extract style from reference -> colors, materials, lighting mood",
+                        "Combine: reference_style + depth_geometry -> photorealistic render",
+                        "Match reference aspect ratio"
+                    ],
+                    "priority_rules": {"strict_mode": True},
+                    "conflict_resolution": "user_prompt > reference_style > depth_map",
+                    "user_prompt_role": "SUPREME_COMMAND for content decisions"
+                }
+                base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
             else:
-                base_prompt = (
-                    "You are receiving a DEPTH MAP image:\n\n"
-                    
-                    "DEPTH MAP:\n"
-                    "- Black and white gradient representing depth\n"
-                    "- White = closest objects, Black = farthest objects\n"
-                    "- Shows spatial relationships and 3D structure\n\n"
-                    
-                    "YOUR TASK:\n"
-                    "1. Interpret the depth map to understand scene geometry\n"
-                    "2. Generate photorealistic 3D render based on this structure\n"
-                    "3. Choose appropriate materials, colors, and lighting\n\n"
-                    
-                    "USER PROMPT (THE SUPREME COMMAND):\n"
-                    "- The User Prompt below is your PRIMARY INSTRUCTION.\n"
-                    "- You MUST follow the user's description for materials, colors, and lighting.\n"
-                    "- The Depth Map provides the SHAPE, the User Prompt provides the LOOK.\n"
-                )
+                prompt_schema = {
+                    "role": "depth_to_render",
+                    "objective": "Generate photorealistic render from depth map only",
+                    "inputs": {
+                        "image_1": {"type": "depth_map", "format": "grayscale", "white": "near", "black": "far"}
+                    },
+                    "execution_steps": [
+                        "Interpret depth map -> scene geometry",
+                        "Generate appropriate materials, colors, lighting",
+                        "Create photorealistic 3D render"
+                    ],
+                    "priority_rules": {"strict_mode": True},
+                    "conflict_resolution": "user_prompt > depth_inferred_content",
+                    "user_prompt_role": "PRIMARY_INSTRUCTION for materials, colors, lighting"
+                }
+                base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
         
-        # ПРОМПТ ДЛЯ COLOR RENDER (EEVEE) - с трансформацией
+        # COLOR RENDER (EEVEE)
         else:
             if has_reference:
-                base_prompt = (
-                    "You are receiving TWO images:\n\n"
-                    
-                    "IMAGE 1 (3D Render - YOUR STRUCTURE SOURCE):\n"
-                    "- This is the GEOMETRY and LAYOUT you must preserve\n"
-                    "- Use this EXCLUSIVELY for object positions and composition\n"
-                    "- IGNORE its bad materials and lighting\n"
-                    "- This defines WHAT is in the scene\n\n"
-                    
-                    "IMAGE 2 (Style Reference - YOUR VISUAL GUIDE):\n"
-                    "- This is the STYLE source (materials, lighting, colors)\n"
-                    "- DO NOT copy objects from here, only their 'look'\n"
-                    "- Apply this style to the geometry of IMAGE 1\n"
-                    "- This defines HOW the scene looks\n\n"
-                    
-                    "USER PROMPT (THE SUPREME COMMAND):\n"
-                    "- The User Prompt below OVERRIDES everything else for CONTENT decisions.\n"
-                    "- If user says 'black background', MAKE IT BLACK, even if Reference Image has a detailed background.\n"
-                    "- If user says 'add neon lights', ADD THEM, even if Reference Image is dark.\n"
-                    "- Reference Image is for STYLE (how things look), User Prompt is for CONTENT (what things are).\n"
-                    "- CONFLICT RESOLUTION: User Prompt > Reference Image Style > Input Render\n\n"
-                    
-                    "YOUR TASK - AGGRESSIVE TRANSFORMATION:\n"
-                    "1. Keep ONLY the composition/layout from IMAGE 1 (Depth/Structure)\n"
-                    "2. COMPLETELY REPLACE materials, lighting, colors with IMAGE 2's style (UNLESS User Prompt says otherwise)\n"
-                    "3. Make materials look like IMAGE 2 (if metallic there → metallic here)\n"
-                    "4. Match IMAGE 2's lighting direction, intensity, and color temperature\n"
-                    "5. Use IMAGE 2's color palette - forget IMAGE 1's colors\n"
-                    "6. Replicate IMAGE 2's atmosphere, depth, and mood\n"
-                    "7. Think: 'IMAGE 1 is the skeleton, IMAGE 2 is the skin'\n\n"
-                    
-                    "CRITICAL - DON'T BE CONSERVATIVE:\n"
-                    "- If IMAGE 1 is blue but IMAGE 2 is warm → make it WARM\n"
-                    "- If IMAGE 1 is flat but IMAGE 2 has depth → add DEPTH\n"
-                    "- If IMAGE 1 is simple but IMAGE 2 is detailed → add DETAILS\n"
-                    "- TRANSFORM aggressively, don't just 'improve' IMAGE 1\n"
-                    "- STRICTLY FOLLOW IMAGE 1's GEOMETRY/LAYOUT. Do not add objects from IMAGE 2.\n"
-                )
+                prompt_schema = {
+                    "role": "render_transformation_with_style",
+                    "objective": "Aggressively transform low-quality render using style reference",
+                    "inputs": {
+                        "image_1": {"type": "3d_render", "use_for": ["geometry", "layout", "composition"], "ignore": ["materials", "lighting", "colors"]},
+                        "image_2": {"type": "style_reference", "use_for": ["materials", "lighting", "colors", "mood", "atmosphere"]}
+                    },
+                    "execution_steps": [
+                        "Preserve ONLY composition/layout from image_1",
+                        "REPLACE all materials with image_2 style",
+                        "REPLACE lighting: direction, intensity, color_temperature",
+                        "REPLACE colors with image_2 palette",
+                        "REPLICATE atmosphere, depth, mood from image_2"
+                    ],
+                    "constraints": {
+                        "transformation_mode": "aggressive",
+                        "preserve_geometry": True,
+                        "copy_objects_from_style": False
+                    },
+                    "priority_rules": {"strict_mode": True},
+                    "conflict_resolution": "user_prompt > reference_style > input_render"
+                }
+                base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
             else:
-                base_prompt = (
-                    "You are receiving a LOW-QUALITY 3D RENDER that needs COMPLETE VISUAL OVERHAUL:\n\n"
-                    
-                    "INPUT IMAGE (ROUGH DRAFT ONLY):\n"
-                    "- Amateur 3D render with placeholder materials and basic lighting\n"
-                    "- Use ONLY for general composition and object positions\n"
-                    "- Colors are WRONG, materials are FAKE, lighting is FLAT\n"
-                    "- This is NOT the target quality - you must COMPLETELY rebuild it\n\n"
-                    
-                    "YOUR MISSION - TOTAL TRANSFORMATION:\n"
-                    "1. REPLACE all materials with photorealistic equivalents:\n"
-                    "   - Metal → realistic metal with proper reflections, anisotropy, scratches\n"
-                    "   - Plastic → varied surface finish, subtle color variation, wear\n"
-                    "   - Wood → visible grain, natural color variation, texture depth\n"
-                    "   - Glass → proper refraction, reflections, subtle imperfections\n"
-                    "   - Fabric → weave patterns, soft shadows, natural draping\n\n"
-                    
-                    "2. REBUILD lighting from scratch:\n"
-                    "   - Add professional 3-point lighting or natural light sources\n"
-                    "   - Strong shadows with soft edges\n"
-                    "   - Realistic reflections and bounce light\n"
-                    "   - Ambient occlusion in corners and crevices\n"
-                    "   - Color temperature variation (warm/cool balance)\n\n"
-                    
-                    "3. REIMAGINE colors:\n"
-                    "   - Input colors are just suggestions - make them BETTER\n"
-                    "   - Add professional color grading\n"
-                    "   - Harmonious palette with contrast\n"
-                    "   - Natural color variation within surfaces\n\n"
-                    
-                    "4. ADD depth and atmosphere:\n"
-                    "   - Volumetric lighting effects (god rays, haze)\n"
-                    "   - Atmospheric perspective (depth fog)\n"
-                    "   - Particle effects if appropriate (dust, moisture)\n"
-                    "   - Background depth and detail\n\n"
-                    
-                    "5. ENHANCE with imperfections:\n"
-                    "   - Surface scratches, dents, wear patterns\n"
-                    "   - Fingerprints on smooth surfaces\n"
-                    "   - Dust accumulation in corners\n"
-                    "   - Natural aging and weathering\n\n"
-                    
-                    "USER PROMPT (THE SUPREME COMMAND):\n"
-                    "- The User Prompt below is your PRIMARY INSTRUCTION for the transformation.\n"
-                    "- If user says 'make it cyberpunk', use cyberpunk materials/lighting.\n"
-                    "- If user says 'add rain', add rain.\n"
-                    "- The input render provides the COMPOSITION, the User Prompt provides the STYLE/CONTENT.\n\n"
-
-                    "CRITICAL MINDSET:\n"
-                    "- Think: 'This is a SKETCH, not the final image'\n"
-                    "- Your goal: 'Student work' → 'Professional portfolio piece'\n"
-                    "- Be BOLD with changes - the input is intentionally low quality\n"
-                    "- Don't preserve bad materials or flat lighting\n"
-                    "- Make every surface, light, and color DRAMATICALLY better\n"
-                    "- Aim for: movie VFX quality or high-end product photography\n"
-                )
+                prompt_schema = {
+                    "role": "render_enhancement",
+                    "objective": "Complete visual overhaul of low-quality 3D render",
+                    "inputs": {
+                        "image_1": {"type": "rough_3d_render", "use_for": ["composition", "layout"], "quality": "placeholder"}
+                    },
+                    "material_upgrades": {
+                        "metal": "realistic_reflections + anisotropy + scratches",
+                        "plastic": "varied_finish + color_variation + wear",
+                        "wood": "visible_grain + natural_color + texture_depth",
+                        "glass": "refraction + reflections + imperfections",
+                        "fabric": "weave_patterns + soft_shadows + natural_draping"
+                    },
+                    "lighting_rebuild": ["3-point_or_natural", "strong_shadows", "bounce_light", "ambient_occlusion", "color_temperature_variation"],
+                    "color_grading": ["professional", "harmonious_palette", "natural_surface_variation"],
+                    "atmosphere": ["volumetric_lighting", "atmospheric_perspective", "particles_if_appropriate"],
+                    "imperfections": ["scratches", "dents", "wear", "dust", "fingerprints"],
+                    "constraints": {
+                        "transformation_mode": "total",
+                        "target_quality": "movie_vfx | high_end_product_photography"
+                    },
+                    "priority_rules": {"strict_mode": True},
+                    "conflict_resolution": "user_prompt > inferred_style"
+                }
+                base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
         
         if user_prompt.strip():
-            return f"{base_prompt}\n\nUSER PROMPT (EXECUTE THIS): {user_prompt.strip()}"
+            return f"{base_prompt}\n\nUSER_PROMPT (EXECUTE THIS): {user_prompt.strip()}"
         else:
             return base_prompt
     
@@ -234,108 +166,60 @@ class GeminiAPI:
             return self._generate_with_rest(depth_image_path, user_prompt, reference_image_path, is_color_render, width, height)
     
     def _generate_with_sdk(self, depth_image_path: str, user_prompt: str, reference_image_path: str = None, is_color_render: bool = False, width: int = 1024, height: int = 1024) -> Tuple[bytes, str]:
-        """Generate image using official Google GenAI SDK"""
+        """Generate image using official Google GenAI SDK."""
         try:
-            if reference_image_path:
-                print("🎯 [GEMINI] Using official SDK with depth + style reference")
-            else:
-                print("🎯 [GEMINI] Using official SDK for image generation")
-            
             if not PIL_AVAILABLE:
-                print("❌ [GEMINI] PIL not available for SDK, switching to REST")
                 self.use_sdk = False
                 self._setup_rest_fallback()
                 return self._generate_with_rest(depth_image_path, user_prompt, reference_image_path, is_color_render, width, height)
             
-            # Build complete prompt
+            # Build prompt and load images - include dimensions in prompt
             full_prompt = self._build_prompt(user_prompt, has_reference=bool(reference_image_path), is_color_render=is_color_render)
-            print(f"📝 [GEMINI] Prompt: {full_prompt[:100]}...")
-            
-            # Load depth image using PIL
-            print(f"🖼️ [GEMINI] Loading depth image: {depth_image_path}")
+            full_prompt += f"\n\nOUTPUT_DIMENSIONS: {width}x{height} pixels (aspect ratio: {width/height:.2f})"
             depth_image = Image.open(depth_image_path)
-            print(f"📏 [GEMINI] Depth image size: {depth_image.size}, mode: {depth_image.mode}")
             
-            # Prepare contents for the API call
-            # CRITICAL CHANGE: Depth image MUST be before reference to ensure structure is prioritized
-            contents = [full_prompt]
+            # Prepare API contents: prompt -> depth_image -> reference_image
+            contents = [full_prompt, depth_image]
             
-            # Add depth image (Structure)
-            contents.append(depth_image)
-            
-            # Add reference image (Style) if provided
             if reference_image_path:
-                print(f"🎨 [GEMINI] Loading reference image: {reference_image_path}")
                 try:
                     reference_image = Image.open(reference_image_path)
                     contents.append(reference_image)
-                    print(f"📏 [GEMINI] Reference image size: {reference_image.size}, mode: {reference_image.mode}")
-                    print("🔄 [GEMINI] Reference image sent LAST to prioritize depth structure")
                 except Exception as e:
-                    print(f"⚠️ [GEMINI] Failed to load reference image, continuing without it: {e}")
+                    print(f"[GEMINI] Failed to load reference image: {e}")
             
-            print("🚀 [GEMINI] Sending request to official API...")
-            print(f"🎯 [GEMINI] Model: {self.model}")
-            print(f"📏 [GEMINI] Target Resolution: {width}x{height}")
+            # Map resolution to API format  
+            resolution_str = "4K" if width >= 4096 or height >= 4096 else "2K" if width >= 2048 or height >= 2048 else "1K"
             
-            # Make the API call
-            # Use correct ImageConfig structure based on user documentation
+            # Calculate aspect ratio from dimensions
+            def calculate_aspect_ratio(w, h):
+                """Calculate closest supported aspect ratio."""
+                ratio = w / h
+                # Supported ratios: 1:1, 16:9, 9:16, 4:3, 3:2
+                ratios = {
+                    "1:1": 1.0,
+                    "16:9": 16/9,
+                    "9:16": 9/16,
+                    "4:3": 4/3,
+                    "3:2": 3/2
+                }
+                closest = min(ratios.items(), key=lambda x: abs(x[1] - ratio))
+                return closest[0]
             
-            # Map resolution to string format expected by API
-            resolution_str = "1K"
-            if width >= 4096 or height >= 4096:
-                resolution_str = "4K"
-            elif width >= 2048 or height >= 2048:
-                resolution_str = "2K"
+            aspect_ratio_str = calculate_aspect_ratio(width, height)
+            print(f"[GEMINI] Using resolution: {resolution_str}, aspect ratio: {aspect_ratio_str}")
             
-            print(f"📏 [GEMINI] Mapped {width}x{height} to API resolution: {resolution_str}")
-            
-            # Determine aspect ratio string
-            # 1:1 is default, but we can try to be specific if needed
-            # For now we'll stick to resolution control
-            
-            # Make the API call
-            # User suggests using 'image_config' with 'image_size'
-            
-            # Map resolution to string format expected by API
-            resolution_str = "1K"
-            if width >= 4096 or height >= 4096:
-                resolution_str = "4K"
-            elif width >= 2048 or height >= 2048:
-                resolution_str = "2K"
-            
-            print(f"📏 [GEMINI] SDK Mapped {width}x{height} to API resolution: {resolution_str}")
-            
-            # Try to construct config with image_config
-            # We use a dictionary for the inner config to avoid import errors if ImageConfig isn't found
-            # The SDK often accepts dicts for config objects
-            
-            # We need to construct the config object carefully
-            # If types.GenerateContentConfig accepts **kwargs, we might be able to pass image_config
-            
+            # Build API config
             try:
-                # Try to use the structure the user found
                 config = types.GenerateContentConfig(
                     temperature=0.8,
                     candidate_count=1,
                     response_modalities=['IMAGE'],
                 )
                 
-                # Manually set image_config if possible, or pass as dict if the SDK supports it
-                # Since we can't easily check the type definition at runtime without crashing,
-                # we'll try to set it as an attribute or pass it in constructor if we could
-                
-                # Let's try creating it as a dict first, as some SDK versions allow this
-                # But self.client.models.generate_content expects a config object usually
-                
-                # Let's try to find ImageConfig in types
+                # Try using ImageConfig if available
                 if hasattr(types, 'ImageConfig'):
-                    print("[GEMINI] Found types.ImageConfig, using it")
-                    img_conf = types.ImageConfig(
-                        image_size=resolution_str,
-                        aspect_ratio="1:1"
-                    )
-                    # Re-create config with image_config
+                    img_conf = types.ImageConfig(image_size=resolution_str, aspect_ratio=aspect_ratio_str)
                     config = types.GenerateContentConfig(
                         temperature=0.8,
                         candidate_count=1,
@@ -343,25 +227,15 @@ class GeminiAPI:
                         image_config=img_conf
                     )
                 else:
-                    print("[GEMINI] types.ImageConfig not found, trying generic dict approach or ImageGenerationConfig fallback")
-                    # Fallback to what we had or try a dict approach if supported
-                    # If the user is right, there MUST be a way to pass this
-                    
-                    # Let's try to pass a raw dictionary as config, many python SDKs support this
+                    # Fallback to dictionary config
                     config = {
                         "temperature": 0.8,
                         "candidateCount": 1,
                         "responseModalities": ["IMAGE"],
-                        "imageConfig": {
-                            "imageSize": resolution_str,
-                            "aspectRatio": "1:1"
-                        }
+                        "imageConfig": {"imageSize": resolution_str, "aspectRatio": aspect_ratio_str}
                     }
-                    print("[GEMINI] Using dictionary config with imageConfig")
-
             except Exception as e:
-                print(f"⚠️ [GEMINI] Config setup failed: {e}")
-                # Fallback to simple config
+                print(f"[GEMINI] Config setup failed: {e}")
                 config = types.GenerateContentConfig(
                     temperature=0.8,
                     candidate_count=1,
@@ -396,23 +270,15 @@ class GeminiAPI:
                     
                     # Convert to PIL Image and then to bytes
                     image = Image.open(BytesIO(part.inline_data.data))
-                    print(f"✅ [GEMINI] Image extracted: {image.size}, mode: {image.mode}")
                     
-                    # Ensure RGB mode
                     if image.mode not in ('RGB', 'RGBA'):
-                        print(f"[GEMINI] Converting {image.mode} to RGB")
                         image = image.convert('RGB')
                     
-                    # Convert to PNG bytes (standard sRGB)
                     img_byte_arr = BytesIO()
                     image.save(img_byte_arr, format='PNG')
-                    image_data = img_byte_arr.getvalue()
-                    
-                    print(f"💾 [GEMINI] Image converted to PNG: {len(image_data)} bytes")
-                    return image_data, "image/png"
+                    return img_byte_arr.getvalue(), "image/png"
             
-            # If no image found, create placeholder
-            print("🎨 [GEMINI] No image part found, creating placeholder...")
+            # Fallback to placeholder if no image found
             text_parts = [part.text for part in parts if part.text is not None]
             if text_parts:
                 return self._create_placeholder_image(f"Model response: {' '.join(text_parts)}")
@@ -422,79 +288,49 @@ class GeminiAPI:
         except Exception as e:
             if isinstance(e, GeminiAPIError):
                 raise
-            print(f"💥 [GEMINI] SDK error: {str(e)}")
-            print("🔄 [GEMINI] Falling back to REST API...")
-            # Fallback to REST API with is_color_render
+            print(f"[GEMINI] SDK error: {str(e)}, falling back to REST")
             self.use_sdk = False
             self._setup_rest_fallback()
             return self._generate_with_rest(depth_image_path, user_prompt, reference_image_path, is_color_render)
     
     def _generate_with_rest(self, depth_image_path: str, user_prompt: str, reference_image_path: str = None, is_color_render: bool = False, width: int = 1024, height: int = 1024) -> Tuple[bytes, str]:
-        """Generate image using REST API fallback"""
+        """Generate image using REST API fallback."""
         try:
-            if reference_image_path:
-                print("🔄 [GEMINI] Using REST API fallback with depth + style reference")
-            else:
-                print("🔄 [GEMINI] Using REST API fallback")
-            
-            # Encode depth image to base64
+            # Encode images to base64
             with open(depth_image_path, 'rb') as f:
                 image_base64 = base64.b64encode(f.read()).decode('utf-8')
             
-            # Encode reference image if provided
             reference_base64 = None
             if reference_image_path:
                 try:
                     with open(reference_image_path, 'rb') as f:
                         reference_base64 = base64.b64encode(f.read()).decode('utf-8')
-                    print("🎨 [GEMINI] Reference image encoded")
                 except Exception as e:
-                    print(f"⚠️ [GEMINI] Failed to encode reference image: {e}")
+                    print(f"[GEMINI] Failed to encode reference image: {e}")
             
-            # Build complete prompt
+            # Build prompt and request
             full_prompt = self._build_prompt(user_prompt, has_reference=bool(reference_image_path), is_color_render=is_color_render)
-            
-            # Add resolution instruction
             full_prompt += f"\n\nCRITICAL OUTPUT SETTING: Generate image EXACTLY at {width}x{height} pixels."
             
-            # Prepare REST API request
             url = f"{self.base_url}/{self.model}:generateContent?key={self.api_key}"
-            print(f"🌐 [GEMINI] REST URL: {url}")
+            headers = {'Content-Type': 'application/json', 'X-Goog-Api-Client': 'python-blender-addon'}
             
-            headers = {
-                'Content-Type': 'application/json',
-                'X-Goog-Api-Client': 'python-blender-addon',
-            }
-            
-            # Build parts array
+            # Build parts: prompt -> depth_image -> reference_image
             parts = [{"text": full_prompt}]
+            parts.append({"inline_data": {"mime_type": "image/png", "data": image_base64}})
             
-            # Add depth image (Structure) - FIRST image
-            parts.append({
-                "inline_data": {
-                    "mime_type": "image/png",
-                    "data": image_base64
-                }
-            })
-            
-            # Add reference image (Style) - SECOND image
             if reference_base64:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": "image/png",
-                        "data": reference_base64
-                    }
-                })
-                print(f"🔄 [GEMINI] Reference image added LAST to prioritize depth structure")
+                parts.append({"inline_data": {"mime_type": "image/png", "data": reference_base64}})
             
-            # Map resolution to string format expected by API
-            resolution_str = "1K"
-            if width >= 4096 or height >= 4096:
-                resolution_str = "4K"
-            elif width >= 2048 or height >= 2048:
-                resolution_str = "2K"
-                
-            print(f"📏 [GEMINI] REST Mapped {width}x{height} to API resolution: {resolution_str}")
+            resolution_str = "4K" if width >= 4096 or height >= 4096 else "2K" if width >= 2048 or height >= 2048 else "1K"
+            
+            # Calculate aspect ratio from dimensions
+            def calculate_aspect_ratio(w, h):
+                ratio = w / h
+                ratios = {"1:1": 1.0, "16:9": 16/9, "9:16": 9/16, "4:3": 4/3, "3:2": 3/2}
+                return min(ratios.items(), key=lambda x: abs(x[1] - ratio))[0]
+            
+            aspect_ratio_str = calculate_aspect_ratio(width, height)
             
             payload = {
                 "contents": [{"parts": parts}],
@@ -505,109 +341,53 @@ class GeminiAPI:
                     "responseModalities": ["IMAGE"],
                     "imageConfig": {
                         "imageSize": resolution_str,
-                        "aspectRatio": "1:1"
+                        "aspectRatio": aspect_ratio_str
                     }
                 }
             }
             
             print(f"📦 [GEMINI] REST payload size: ~{len(str(payload))} chars")
-            print(f"🖼️ [GEMINI] Depth image data size: {len(image_base64)} chars")
-            if reference_base64:
-                print(f"🎨 [GEMINI] Reference image data size: {len(reference_base64)} chars")
-            
             # Make REST request
-            print("🚀 [GEMINI] Sending REST request...")
             response = requests.post(url, headers=headers, json=payload, timeout=300)
             
-            print(f"📡 [GEMINI] Response status: {response.status_code}")
-            
             if response.status_code == 403:
-                raise GeminiAPIError("API key invalid or quota exceeded. Check your Google AI Studio account.")
+                raise GeminiAPIError("API key invalid or quota exceeded.")
             elif response.status_code == 429:
-                retry_after = response.headers.get('Retry-After', 'unknown')
-                raise GeminiAPIError(f"Rate limit exceeded. Retry after: {retry_after} seconds.")
+                raise GeminiAPIError(f"Rate limit exceeded. Retry after: {response.headers.get('Retry-After', 'unknown')} seconds.")
             elif response.status_code == 400:
-                print(f"📝 [GEMINI] Error details: {response.text}")
-                raise GeminiAPIError(f"Bad request (400): {response.text}")
+                raise GeminiAPIError(f"Bad request: {response.text[:200]}")
             elif response.status_code != 200:
-                raise GeminiAPIError(f"API request failed with status {response.status_code}: {response.text}")
+                raise GeminiAPIError(f"API request failed with status {response.status_code}")
             
-            # Parse REST response
+            # Parse response
             result = response.json()
-            print(f"🔍 [GEMINI] Response keys: {list(result.keys())}")
             
             if 'candidates' not in result or not result['candidates']:
-                print("❌ [GEMINI] No candidates in response")
-                raise GeminiAPIError("No image generated. The model may have rejected the request.")
+                raise GeminiAPIError("No image generated.")
             
             candidate = result['candidates'][0]
-            print(f"🎯 [GEMINI] Candidate keys: {list(candidate.keys())}")
-            
             if 'content' not in candidate:
-                print("❌ [GEMINI] No content in candidate")
-                print(f"🔍 [GEMINI] Full candidate: {candidate}")
-                raise GeminiAPIError("Invalid response format - no content in candidate")
+                raise GeminiAPIError("Invalid response format.")
             
-            parts = candidate['content']['parts'] 
-            print(f"🧩 [GEMINI] Found {len(parts)} parts in response")
+            parts = candidate['content']['parts']
             
-            # Find image part with detailed logging
-            for i, part in enumerate(parts):
-                print(f"🔍 [GEMINI] Part {i}: {list(part.keys())}")
-                
-                if 'text' in part:
-                    text_content = part['text'][:200] if part['text'] else "None"
-                    print(f"📝 [GEMINI] Part {i} text: {text_content}...")
-                
-                # Check both possible formats: inline_data and inlineData
-                inline_data_key = None
-                if 'inline_data' in part:
-                    inline_data_key = 'inline_data'
-                elif 'inlineData' in part:
-                    inline_data_key = 'inlineData'
+            # Find and extract image data
+            for part in parts:
+                inline_data_key = 'inline_data' if 'inline_data' in part else 'inlineData' if 'inlineData' in part else None
                 
                 if inline_data_key:
-                    print(f"🖼️ [GEMINI] Part {i} has {inline_data_key}!")
                     inline_data = part[inline_data_key]
-                    print(f"🔍 [GEMINI] {inline_data_key} keys: {list(inline_data.keys())}")
+                    data_key = 'data' if 'data' in inline_data else 'bytes' if 'bytes' in inline_data else None
                     
-                    # Check both possible data field names
-                    data_key = None
-                    if 'data' in inline_data:
-                        data_key = 'data'
-                    elif 'bytes' in inline_data:
-                        data_key = 'bytes'
-                    
-                    if data_key:
-                        data_len = len(inline_data[data_key]) if inline_data[data_key] else 0
+                    if data_key and inline_data[data_key]:
                         mime_type = inline_data.get('mime_type', inline_data.get('mimeType', 'image/jpeg'))
-                        print(f"📊 [GEMINI] Image data found: {data_len} chars, type: {mime_type}")
-                        
-                        if data_len > 0:
-                            image_data = base64.b64decode(inline_data[data_key])
-                            print(f"✅ [GEMINI] REST image decoded: {len(image_data)} bytes")
-                            return image_data, mime_type
-                        else:
-                            print(f"⚠️ [GEMINI] {inline_data_key}.{data_key} is empty")
-                    else:
-                        print(f"⚠️ [GEMINI] No 'data' or 'bytes' in {inline_data_key}")
-                        print(f"🔍 [GEMINI] Available fields: {list(inline_data.keys())}")
+                        return base64.b64decode(inline_data[data_key]), mime_type
             
-            # Detailed fallback info
+            # Fallback to placeholder
             text_parts = [part.get('text', '') for part in parts if 'text' in part]
             if text_parts:
-                full_text = ' '.join(text_parts)
-                print(f"📝 [GEMINI] Full model text response ({len(full_text)} chars):")
-                print(f"📝 [GEMINI] {full_text[:500]}...")
-                
-                # Check if text suggests the model can't generate images
-                if any(word in full_text.lower() for word in ['cannot', "can't", 'unable', 'sorry', 'text-based']):
-                    print("⚠️ [GEMINI] Model seems to indicate it cannot generate images")
-                
-                return self._create_placeholder_image(f"Model response: {full_text}")
+                return self._create_placeholder_image(f"Model response: {' '.join(text_parts)}")
             
-            print("❌ [GEMINI] No image or text found in any part")
-            print(f"🔍 [GEMINI] Full parts structure: {parts}")
             raise GeminiAPIError("No image data found in API response")
             
         except requests.RequestException as e:
@@ -620,21 +400,10 @@ class GeminiAPI:
             raise GeminiAPIError(f"Unexpected error: {str(e)}")
     
     def _create_placeholder_image(self, text_response: str) -> Tuple[bytes, str]:
-        """Create a placeholder image with text info"""
+        """Create a placeholder image when no image is returned."""
         try:
-            print("🎨 [GEMINI] Creating text-based placeholder image...")
-            
-            # Simple 100x100 colored PNG
-            width, height = 100, 100
-            
-            # Create a simple blue square PNG
-            png_data = self._create_simple_png(width, height, (0, 100, 200))  # Blue
-            
-            print(f"✅ [GEMINI] Placeholder created: {width}x{height} blue square")
-            print(f"📝 [GEMINI] Original text: {text_response[:100]}...")
-            
+            png_data = self._create_simple_png(100, 100, (0, 100, 200))
             return png_data, "image/png"
-            
         except Exception as e:
             raise GeminiAPIError(f"Failed to create placeholder: {str(e)}")
     
@@ -710,470 +479,136 @@ class GeminiAPI:
             raise GeminiAPIError(f"Image edit failed: {str(e)}")
     
     def _build_edit_prompt(self, user_prompt: str, has_mask: bool = False, has_reference: bool = False) -> str:
-        """Build prompt for image editing"""
+        """Build prompt for image editing using structured JSON schema."""
+        import json
         
         # Special finalization mode
         if user_prompt == "[FINALIZE_COMPOSITE]":
-            base_prompt = (
-                "COMPOSITE FINALIZATION - Unify entire image into seamless photorealistic result:\n\n"
-                
-                "CRITICAL CONTEXT:\n"
-                "This image was created through multiple compositing steps (adding objects, inpainting, etc.).\n"
-                "Your task: Make it look like ONE UNIFIED PHOTOGRAPH, not a collage.\n"
-                "Remove ALL visible seams, color mismatches, lighting inconsistencies.\n\n"
-                
-                "COMMON PROBLEMS TO FIX:\n"
-                "1. Objects have different color temperatures (some warm, some cool)\n"
-                "2. Brightness mismatches between added objects and original scene\n"
-                "3. Contrast differences (some areas too contrasty, others too flat)\n"
-                "4. Shadow inconsistencies (direction or hardness doesn't match)\n"
-                "5. Visible compositing edges or halos around objects\n"
-                "6. Objects don't feel grounded in the scene\n"
-                "7. Overall image lacks cohesion - looks like separate pieces\n\n"
-                
-                "YOUR TASK - PROFESSIONAL COLOR GRADING & UNIFICATION:\n"
-                
-                "STEP 1 - ANALYZE ENTIRE COMPOSITION:\n"
-                "- Identify which areas look 'off' or disconnected\n"
-                "- Find color temperature conflicts\n"
-                "- Detect brightness/contrast mismatches\n"
-                "- Look for unnatural edges or transitions\n\n"
-                
-                "STEP 2 - UNIFIED LIGHTING:\n"
-                "- Establish ONE dominant light direction for entire scene\n"
-                "- Make ALL objects respect this light direction\n"
-                "- Unify shadow hardness across all elements\n"
-                "- Add missing ambient occlusion between objects\n"
-                "- Strengthen contact shadows where objects meet surfaces\n\n"
-                
-                "STEP 3 - COLOR HARMONY:\n"
-                "- Choose ONE color temperature for the entire scene\n"
-                "- Grade ALL objects to match this temperature\n"
-                "- Create unified color palette - no outliers\n"
-                "- Add subtle color spill between neighboring elements\n"
-                "- Match saturation levels across all objects\n\n"
-                
-                "STEP 4 - CONTRAST & EXPOSURE:\n"
-                "- Unify exposure - no objects too bright or too dark\n"
-                "- Match contrast levels between all elements\n"
-                "- Balance highlights and shadows across scene\n"
-                "- Create cohesive tonal range\n\n"
-                
-                "STEP 5 - SEAMLESS INTEGRATION:\n"
-                "- Blend ALL visible compositing edges\n"
-                "- Remove halos, color fringing, or artifacts\n"
-                "- Add atmospheric perspective if needed (distant = hazier)\n"
-                "- Unify sharpness/blur across scene\n"
-                "- Add subtle film grain or noise uniformly\n\n"
-                
-                "STEP 6 - GROUNDING & REALISM:\n"
-                "- Ensure all objects cast appropriate shadows\n"
-                "- Add reflections where needed (floors, mirrors, glossy surfaces)\n"
-                "- Create subtle light bounce between objects\n"
-                "- Add depth cues (foreground sharper, background softer)\n"
-                "- Make everything feel 'heavy' and physically present\n\n"
-                
-                "REAL-WORLD EXAMPLE:\n"
-                "BEFORE: Room with added furniture - chair too warm, table too bright, \n"
-                "        plant has harsh shadows while room has soft shadows, visible edge around lamp\n"
-                
-                "AFTER FINALIZATION:\n"
-                "  → ALL objects color-graded to match room's cool daylight\n"
-                "  → Chair brightness reduced to match room exposure\n"
-                "  → ALL shadows softened to match ambient lighting\n"
-                "  → Lamp edge blended perfectly\n"
-                "  → Added contact shadows under all furniture\n"
-                "  → Slight color spill from wooden floor onto chair legs\n"
-                "  → Unified film grain over entire image\n"
-                "  → Result: Looks like ONE photograph, not composite\n\n"
-                
-                "CRITICAL SUCCESS CRITERIA:\n"
-                "✅ Image looks like ONE unified photograph\n"
-                "✅ ALL objects respect same lighting direction\n"
-                "✅ Consistent color temperature throughout\n"
-                "✅ Matched contrast and exposure across all elements\n"
-                "✅ NO visible compositing edges or seams\n"
-                "✅ Shadows are consistent (direction, hardness, color)\n"
-                "✅ Every object feels grounded and physically present\n"
-                "✅ Overall color harmony - no jarring mismatches\n"
-                "✅ Professional photorealistic result\n"
-                
-                "CRITICAL RULES:\n"
-                "❌ NEVER leave color temperature conflicts\n"
-                "❌ NEVER ignore exposure mismatches\n"
-                "❌ NEVER skip shadow unification\n"
-                "❌ NEVER leave visible compositing edges\n"
-                "❌ NEVER keep objects that look 'pasted on'\n"
-                "❌ NEVER leave lighting direction conflicts\n\n"
-                
-                "REMEMBER:\n"
-                "You are a PROFESSIONAL COLORIST doing final grade.\n"
-                "This is the LAST STEP before client delivery.\n"
-                "Make it PERFECT - unified, seamless, photorealistic.\n"
-                "Goal: Viewer should NEVER suspect this was composited.\n"
-            )
-            return base_prompt
+            prompt_schema = {
+                "role": "composite_finalization",
+                "objective": "Unify composited image into seamless photorealistic photograph",
+                "context": "Image created through multiple compositing steps - needs unification",
+                "problems_to_fix": [
+                    "color_temperature_conflicts",
+                    "brightness_mismatches",
+                    "contrast_differences",
+                    "shadow_inconsistencies",
+                    "visible_compositing_edges",
+                    "ungrounded_objects"
+                ],
+                "execution_steps": {
+                    "analyze": ["find_disconnected_areas", "detect_color_conflicts", "find_unnatural_edges"],
+                    "unify_lighting": ["establish_dominant_light_direction", "match_shadow_hardness", "add_ambient_occlusion", "strengthen_contact_shadows"],
+                    "color_harmony": ["choose_single_color_temperature", "grade_all_objects", "add_color_spill", "match_saturation"],
+                    "exposure": ["unify_brightness", "match_contrast_levels", "balance_highlights_shadows"],
+                    "integration": ["blend_compositing_edges", "remove_halos", "add_atmospheric_perspective", "unify_sharpness", "add_uniform_film_grain"],
+                    "grounding": ["cast_appropriate_shadows", "add_reflections", "create_light_bounce", "add_depth_cues"]
+                },
+                "success_criteria": {
+                    "required": ["unified_photograph", "consistent_lighting", "consistent_color_temperature", "no_visible_seams", "consistent_shadows", "grounded_objects", "color_harmony"]
+                },
+                "constraints": {
+                    "strict_mode": True,
+                    "never_allow": ["color_conflicts", "exposure_mismatches", "visible_edges", "pasted_on_look", "lighting_conflicts"]
+                }
+            }
+            return f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
         
         if has_mask and has_reference:
-            base_prompt = (
-                "🎯 CRITICAL: READ USER'S PROMPT FIRST!\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"USER'S INSTRUCTION (DO THIS EXACTLY!):\n"
-                f'"{user_prompt}"\n'
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                
-                "YOUR TASK - SIMPLE AND DIRECT:\n"
-                "1. Read user's prompt above - THIS IS WHAT YOU MUST DO!\n"
-                "2. Look at IMAGE 1 (reference) - find the object user wants\n"
-                "3. Look at IMAGE 3 (mask - colored area) - this is WHERE to place it\n"
-                "4. Look at IMAGE 2 (scene with sketch) - ERASE the sketch\n"
-                "5. Place object from IMAGE 1 into the colored area from IMAGE 3\n"
-                "6. Follow user's prompt for HOW to place it (sitting/standing/facing/etc)\n"
-                "7. Relight object to match scene lighting\n\n"
-                
-                "WHAT YOU HAVE:\n"
-                "• IMAGE 1 (REFERENCE) = The object user wants to add\n"
-                "• IMAGE 2 (SCENE) = Where to add it (has colored sketch showing location)\n"
-                "• IMAGE 3 (MASK) = Exact colored area for placement\n"
-                "• USER PROMPT = Tells you WHAT and HOW\n\n"
-                
-                "CRITICAL RULES:\n"
-                "🔴 RULE #1: USER'S PROMPT IS LAW - Follow it EXACTLY!\n"
-                "🔴 RULE #2: Place object in colored area from IMAGE 3 (mask)\n"
-                "🔴 RULE #3: ERASE sketch completely - replace with real object\n"
-                "🔴 RULE #4: Relight object to match IMAGE 2's lighting\n\n"
-                
-                "SIMPLE EXAMPLE:\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "USER PROMPT: 'добавь мужчину на траве в обведённом кругу'\n"
-                "\n"
-                "WHAT YOU DO:\n"
-                "1. Look at IMAGE 1 → find the man\n"
-                "2. Look at IMAGE 3 → see the colored circle on grass\n"
-                "3. Look at IMAGE 2 → see the sketch circle (erase it!)\n"
-                "4. Place man from IMAGE 1 into circle area\n"
-                "5. Make him ON THE GRASS (user said 'на траве')\n"
-                "6. Erase colored circle sketch\n"
-                "7. Relight man to match outdoor lighting\n"
-                "8. Cast shadow on grass\n"
-                "9. DONE - man is now on grass in that spot!\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                
-                "HOW TO DO IT:\n"
-                
-                "STEP 1 - READ USER PROMPT (at the top!):\n"
-                "  → What object? (e.g., 'мужчину', 'chair', 'car')\n"
-                "  → Where? (e.g., 'на траве', 'at desk', 'in corner')\n"
-                "  → How? (e.g., 'standing', 'sitting', 'facing camera')\n\n"
-                
-                "STEP 2 - FIND OBJECT IN IMAGE 1:\n"
-                "  → Identify the object user wants\n"
-                "  → Remember its shape, textures, details\n"
-                "  → Ignore its background\n\n"
-                
-                "STEP 3 - FIND LOCATION:\n"
-                "  → IMAGE 3 (mask) shows colored area = exact spot\n"
-                "  → IMAGE 2 shows sketch = rough guide (erase it!)\n\n"
-                
-                "STEP 4 - PLACE OBJECT:\n"
-                "  → Put object in colored area (from IMAGE 3)\n"
-                "  → Follow user's prompt (orientation, pose, etc.)\n"
-                "  → ERASE sketch completely\n\n"
-                
-                "STEP 5 - MAKE IT REALISTIC:\n"
-                "  → Relight object to match IMAGE 2's lighting\n"
-                "  → Adjust colors to match scene\n"
-                "  → Cast shadows (direction must match scene)\n"
-                "  → Blend edges smoothly\n\n"
-                
-                "MORE EXAMPLES:\n"
-                
-                "Example 1 - 'Поставь этот стул в углу у окна':\n"
-                "  → Find chair in IMAGE 1\n"
-                "  → Place it in corner near window (colored area from IMAGE 3)\n"
-                "  → Erase colored sketch\n"
-                "  → Relight with window light\n"
-                "  → Cast shadow\n"
-                "  → DONE!\n\n"
-                
-                "Example 2 - 'Add this person sitting at the desk':\n"
-                "  → Find person in IMAGE 1\n"
-                "  → Place at desk (colored area)\n"
-                "  → Make them SITTING (user said so!)\n"
-                "  → Erase sketch\n"
-                "  → Relight with office lights\n"
-                "  → DONE!\n\n"
-                
-                "Example 3 - 'добавь мужчину на траве в обведённом кругу':\n"
-                "  → Find man in IMAGE 1\n"
-                "  → Place ON GRASS in circle area (IMAGE 3)\n"
-                "  → Erase circle sketch\n"
-                "  → Relight with outdoor lighting\n"
-                "  → Cast shadow on grass\n"
-                "  → DONE!\n\n"
-                
-                "WHAT YOU MUST DO:\n"
-                "✅ Follow user's prompt EXACTLY\n"
-                "✅ Place object in colored area (IMAGE 3)\n"
-                "✅ ERASE sketch completely\n"
-                "✅ Relight object to match scene\n"
-                "✅ Cast shadows\n"
-                "✅ Make it look photorealistic\n\n"
-                
-                "WHAT YOU MUST NOT DO:\n"
-                "❌ NEVER ignore user's prompt\n"
-                "❌ NEVER place object in wrong spot\n"
-                "❌ NEVER keep sketch visible\n"
-                "❌ NEVER forget shadows\n\n"
-                
-                "FINAL REMINDER:\n"
-                "🔴 USER PROMPT (at top) = YOUR PRIMARY INSTRUCTION!\n"
-                "🔴 Read it carefully and do EXACTLY what it says!\n"
-                "🔴 If user says 'на траве' → place on grass!\n"
-                "🔴 If user says 'sitting' → make them sit!\n"
-                "🔴 If user says 'в обведённом кругу' → place in circled area!\n\n"
-            )
+            prompt_schema = {
+                "role": "object_placement_with_mask",
+                "objective": "Place object from reference into masked area of scene",
+                "inputs": {
+                    "image_1": {"type": "reference", "contains": "object_to_add"},
+                    "image_2": {"type": "scene", "contains": "target_location + sketch_to_erase"},
+                    "image_3": {"type": "mask", "colored_area": "placement_location"}
+                },
+                "execution_steps": [
+                    "Parse user_prompt for: what_object, where_to_place, how_to_place",
+                    "Extract object from image_1",
+                    "Find colored area in image_3 = exact placement spot",
+                    "ERASE sketch from image_2",
+                    "Place object at masked location",
+                    "Relight object to match image_2 lighting",
+                    "Cast shadows matching scene",
+                    "Blend edges seamlessly"
+                ],
+                "constraints": {
+                    "strict_mode": True,
+                    "erase_sketch": True,
+                    "match_scene_lighting": True
+                },
+                "priority_rules": {"user_prompt_is_law": True},
+                "conflict_resolution": "user_prompt > mask_location > reference_object",
+                "user_prompt": f"{user_prompt}"
+            }
+            base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
         elif has_mask:
-            base_prompt = (
-                "INPAINTING TASK - Replace sketch with photorealistic content:\n\n"
-                
-                "CONTEXT:\n"
-                "User drew a rough SKETCH on their image to show where they want NEW content.\n"
-                "The sketch is UGLY and TEMPORARY - it's just a guide.\n"
-                "Your job: ERASE the sketch, CREATE beautiful realistic content in that spot.\n\n"
-                
-                "IMAGE 1 (PHOTO WITH SKETCH OVERLAY):\n"
-                "- Original photo/render with user's sketch drawn on top\n"
-                "- Sketch colors show LOCATION and rough SHAPE only\n"
-                "- Sketch is NOT the final look - it will be DELETED\n\n"
-                
-                "IMAGE 2 (MASK - WHERE TO EDIT):\n"
-                "- Black areas = DON'T TOUCH (keep original)\n"
-                "- Colored areas = SKETCH LOCATION (delete sketch, add new content)\n\n"
-                
-                "STEP-BY-STEP PROCESS:\n"
-                "1. Look at IMAGE 1 - see the ugly sketch user drew\n"
-                "2. Look at IMAGE 2 - see WHERE the sketch is\n"
-                "3. Read user's PROMPT - understand WHAT to create\n"
-                "4. COMPLETELY ERASE the sketch from those areas\n"
-                "5. CREATE photorealistic content matching the prompt\n"
-                "6. Match original image's lighting, shadows, perspective, style\n"
-                "7. Blend edges perfectly (no visible seams)\n\n"
-                
-                "REAL EXAMPLES:\n"
-                "Example 1:\n"
-                "  - User draws RED CIRCLE\n"
-                "  - Prompt: 'add sunset light through window'\n"
-                "  - You do: DELETE red circle → CREATE realistic warm sunlight rays\n"
-                "  - Final: Beautiful sunset light, NO red circle visible\n\n"
-                
-                "Example 2:\n"
-                "  - User draws BLUE BLOB\n"
-                "  - Prompt: 'add water puddle on floor'\n"
-                "  - You do: DELETE blue blob → CREATE realistic water with reflections\n"
-                "  - Final: Real water puddle, NO blue blob visible\n\n"
-                
-                "Example 3:\n"
-                "  - User draws GREEN SCRIBBLES\n"
-                "  - Prompt: 'add plant in vase'\n"
-                "  - You do: DELETE green scribbles → CREATE detailed plant with leaves\n"
-                "  - Final: Beautiful plant, NO scribbles visible\n\n"
-                
-                "CRITICAL RULES:\n"
-                "❌ NEVER keep the sketch visible\n"
-                "❌ NEVER 'improve' the sketch - DELETE it completely\n"
-                "❌ NEVER leave construction lines, rough shapes, or color blobs\n"
-                "✅ ALWAYS erase sketch 100% before creating new content\n"
-                "✅ ALWAYS create photorealistic result\n"
-                "✅ ALWAYS match original image lighting and style\n"
-                "✅ ALWAYS blend seamlessly at edges\n"
-                "✅ ALWAYS follow user's text prompt for WHAT to create\n\n"
-                
-                "REMEMBER:\n"
-                "Sketch = temporary guide (like construction lines in drawing)\n"
-                "Final image = professional result with NO sketch traces\n"
-                "User drew sketch to show LOCATION + rough IDEA\n"
-                "You create PHOTOREALISTIC version and REMOVE sketch completely\n"
-            )
+            prompt_schema = {
+                "role": "inpainting",
+                "objective": "Replace sketch with photorealistic content",
+                "context": "User drew rough sketch as temporary guide - must DELETE and replace",
+                "inputs": {
+                    "image_1": {"type": "photo_with_sketch", "sketch_is": "temporary_guide_to_delete"},
+                    "image_2": {"type": "mask", "black": "dont_touch", "colored": "sketch_location_to_replace"}
+                },
+                "execution_steps": [
+                    "Identify sketch areas from mask",
+                    "COMPLETELY ERASE sketch (100%)",
+                    "CREATE photorealistic content per user_prompt",
+                    "Match original image lighting, shadows, perspective",
+                    "Blend edges seamlessly"
+                ],
+                "constraints": {
+                    "strict_mode": True,
+                    "never_keep_sketch_visible": True,
+                    "never_improve_sketch": True,
+                    "always_delete_completely": True
+                },
+                "output_requirement": "photorealistic with NO sketch traces"
+            }
+            base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
         elif has_reference:
-            base_prompt = (
-                "PHOTOREALISTIC OBJECT INTEGRATION - Seamlessly blend reference into scene:\n\n"
-                
-                "CRITICAL CONTEXT:\n"
-                "User is NOT asking for simple copy-paste! They want PHOTOREALISTIC INTEGRATION.\n"
-                "The object from reference must look like it was PHOTOGRAPHED in the target scene.\n"
-                "This requires ADVANCED color grading, lighting match, shadow casting, and perspective correction.\n\n"
-                
-                "IMAGE 1 (REFERENCE - SOURCE OBJECT):\n"
-                "- Contains the object/person to integrate into IMAGE 2\n"
-                "- Extract its SHAPE and STRUCTURE (what it is)\n"
-                "- IGNORE its original lighting, colors, and background\n"
-                "- Think: 'I need this OBJECT, but I'll RELIGHT it for the new scene'\n\n"
-                
-                "IMAGE 2 (TARGET SCENE - DESTINATION):\n"
-                "- This is your PRIMARY reference for visual style\n"
-                "- Analyze: lighting direction, color temperature, shadow hardness, ambient light\n"
-                "- The object from IMAGE 1 must MATCH this scene's lighting 100%\n\n"
-                
-                "YOUR TASK - PROFESSIONAL COMPOSITING:\n"
-                
-                "STEP 1 - LIGHTING ANALYSIS (IMAGE 2):\n"
-                "- Light direction: Where are shadows pointing? (e.g., left side, top-right)\n"
-                "- Light hardness: Sharp shadows = hard light, soft shadows = diffuse light\n"
-                "- Color temperature: Warm (orange/yellow) or cool (blue/white)?\n"
-                "- Ambient light: How bright are shadow areas?\n"
-                "- Reflections: Are there glossy surfaces? What do they reflect?\n\n"
-                
-                "STEP 2 - OBJECT EXTRACTION (IMAGE 1):\n"
-                "- Identify the object shape, structure, materials\n"
-                "- Forget its current lighting - you will RELIGHT it\n"
-                "- Preserve textures and material properties (metal, wood, fabric, etc.)\n\n"
-                
-                "STEP 3 - INTEGRATION (CRITICAL!):\n"
-                "A. RELIGHTING:\n"
-                "   - Apply IMAGE 2's light direction to the object\n"
-                "   - Match light color temperature exactly\n"
-                "   - Create shadows that match IMAGE 2's shadow style\n"
-                "   - Add ambient occlusion in contact areas\n"
-                
-                "B. COLOR GRADING:\n"
-                "   - Adjust object's colors to match IMAGE 2's color palette\n"
-                "   - If IMAGE 2 is warm → warm the object's colors\n"
-                "   - If IMAGE 2 is desaturated → reduce object's saturation\n"
-                "   - Match overall brightness/exposure\n"
-                
-                "C. SHADOWS:\n"
-                "   - Cast shadows from object onto IMAGE 2's surfaces\n"
-                "   - Shadow direction MUST match IMAGE 2's existing shadows\n"
-                "   - Shadow softness MUST match IMAGE 2's shadow hardness\n"
-                "   - Add contact shadows (dark areas where object touches surface)\n"
-                
-                "D. PERSPECTIVE:\n"
-                "   - Match camera angle from IMAGE 2\n"
-                "   - Scale object appropriately for scene\n"
-                "   - Ensure ground plane alignment\n"
-                
-                "E. REFLECTIONS & AMBIENT:\n"
-                "   - If object is glossy → reflect IMAGE 2's environment\n"
-                "   - Add ambient light bounce from IMAGE 2's surfaces\n"
-                "   - Color spill: nearby colored surfaces affect object colors\n\n"
-                
-                "STEP 4 - FINAL BLEND:\n"
-                "- Edge softness: match IMAGE 2's sharpness/blur\n"
-                "- Atmospheric perspective: distant objects are hazier\n"
-                "- Depth of field: match IMAGE 2's focus plane\n"
-                "- Film grain/noise: match IMAGE 2's texture\n\n"
-                
-                "REAL-WORLD EXAMPLE:\n"
-                "IMAGE 1: Photo of a red chair (photographed outdoors, bright daylight)\n"
-                "IMAGE 2: Dark moody interior with warm tungsten lights from left\n"
-                "USER: 'Add the chair by the window'\n"
-                
-                "WRONG (copy-paste): Bright red chair with daylight look = looks fake!\n"
-                "RIGHT (professional integration):\n"
-                "  → Chair shape preserved\n"
-                "  → BUT relit with warm tungsten light from left\n"
-                "  → Red color adjusted to warm/darker tone matching room\n"
-                "  → Soft shadow cast to the right (opposite of light)\n"
-                "  → Contact shadow under chair legs (ambient occlusion)\n"
-                "  → Slight warm color spill from wooden floor onto chair base\n"
-                "  → Chair looks like it was PHOTOGRAPHED in this room\n\n"
-                
-                "CRITICAL SUCCESS CRITERIA:\n"
-                "✅ Object MUST look like it was PHOTOGRAPHED in IMAGE 2's scene\n"
-                "✅ Lighting on object MUST match IMAGE 2 exactly (direction, color, hardness)\n"
-                "✅ Object colors MUST be color-graded to match IMAGE 2's palette\n"
-                "✅ Shadows MUST be cast correctly with right direction and softness\n"
-                "✅ No visible compositing edges - perfect blend\n"
-                "✅ Viewer should NOT be able to tell it's from different photo\n"
-                
-                "CRITICAL MISTAKES TO AVOID:\n"
-                "❌ NEVER keep object's original lighting from IMAGE 1\n"
-                "❌ NEVER keep object's original colors unchanged\n"
-                "❌ NEVER forget to cast shadows onto IMAGE 2's surfaces\n"
-                "❌ NEVER ignore IMAGE 2's light direction\n"
-                "❌ NEVER make it look like a PNG sticker pasted on\n"
-                "❌ NEVER create lighting conflicts (e.g., shadows wrong direction)\n\n"
-                
-                "REMEMBER:\n"
-                "You are a PROFESSIONAL COMPOSITOR, not a copy-paste tool.\n"
-                "The object must be RELIT, COLOR-GRADED, and SHADOWED to match the target scene.\n"
-                "Final result should be INDISTINGUISHABLE from a real photograph.\n"
-                
-                "OLD STYLE TRANSFER PROMPT (for reference, DON'T use this):\n"
-                
-                "You are receiving TWO images:\n\n"
-                
-                "IMAGE 1 (Style Reference - YOUR PRIMARY GUIDE):\n"
-                "- This is your MAIN reference for ALL visual aspects\n"
-                "- COPY AGGRESSIVELY: lighting setup, material types, color palette, texture quality, mood, atmosphere\n"
-                "- Study this image's visual language and REPLICATE it completely\n"
-                "- This shows the TARGET result you must achieve\n\n"
-                
-                "IMAGE 2 (Original Image - ONLY for composition):\n"
-                "- Use EXCLUSIVELY for object positions, layout, scene structure\n"
-                "- IGNORE its colors, materials, lighting, and current style\n"
-                "- Treat current look as TEMPORARY - will be completely replaced\n"
-                "- Keep ONLY the composition, everything else changes\n\n"
-                
-                "YOUR TASK - AGGRESSIVE STYLE TRANSFORMATION:\n"
-                "1. Keep ONLY composition/layout/objects from IMAGE 2\n"
-                "2. COMPLETELY REPLACE materials with IMAGE 1's style:\n"
-                "   - If IMAGE 1 has metallic materials → make IMAGE 2's objects metallic\n"
-                "   - If IMAGE 1 has matte surfaces → make IMAGE 2's objects matte\n"
-                "   - If IMAGE 1 has wood texture → apply wood-like materials\n"
-                "3. COMPLETELY REPLACE lighting with IMAGE 1's setup:\n"
-                "   - Match light direction, intensity, color temperature\n"
-                "   - Copy shadow hardness/softness\n"
-                "   - Replicate ambient lighting mood\n"
-                "4. COMPLETELY REPLACE colors with IMAGE 1's palette:\n"
-                "   - If IMAGE 1 is warm (orange/red) → make IMAGE 2 warm\n"
-                "   - If IMAGE 1 is cool (blue/cyan) → make IMAGE 2 cool\n"
-                "   - Match color saturation and vibrancy\n"
-                "5. REPLICATE atmosphere and mood:\n"
-                "   - If IMAGE 1 is dramatic → make IMAGE 2 dramatic\n"
-                "   - If IMAGE 1 is soft/gentle → make IMAGE 2 soft/gentle\n"
-                "   - Copy depth, detail level, visual complexity\n\n"
-                
-                "CRITICAL - BE AGGRESSIVE, NOT CONSERVATIVE:\n"
-                "❌ DON'T just 'slightly adjust' IMAGE 2\n"
-                "❌ DON'T preserve IMAGE 2's current colors/materials\n"
-                "❌ DON'T be subtle or gentle with changes\n"
-                "✅ COMPLETELY TRANSFORM to match IMAGE 1's style\n"
-                "✅ Think: 'IMAGE 1 is the goal, IMAGE 2 is just a layout template'\n"
-                "✅ If IMAGE 1 is blue but IMAGE 2 is red → make it BLUE\n"
-                "✅ If IMAGE 1 is dark but IMAGE 2 is bright → make it DARK\n"
-                "✅ If IMAGE 1 is detailed but IMAGE 2 is simple → add DETAILS\n\n"
-                
-                "EXAMPLE:\n"
-                "- IMAGE 1: Warm sunset photo with golden light, soft shadows, rich textures\n"
-                "- IMAGE 2: Cool blue render with flat lighting\n"
-                "- YOUR RESULT: Keep IMAGE 2's objects/layout BUT with:\n"
-                "  → Golden sunset lighting from IMAGE 1\n"
-                "  → Warm orange/red colors from IMAGE 1\n"
-                "  → Soft shadows and rich textures from IMAGE 1\n"
-                "  → Final looks like IMAGE 1's style applied to IMAGE 2's composition\n\n"
-                
-                "REMEMBER:\n"
-                "Style reference (IMAGE 1) = your visual TARGET\n"
-                "Original image (IMAGE 2) = composition template ONLY\n"
-                "AGGRESSIVELY copy IMAGE 1's visual style to IMAGE 2's layout\n"
-            )
+            prompt_schema = {
+                "role": "object_integration",
+                "objective": "Photorealistic integration of reference object into scene",
+                "context": "NOT copy-paste - requires professional compositing with relighting",
+                "inputs": {
+                    "image_1": {"type": "reference", "extract": ["shape", "structure"], "ignore": ["lighting", "colors", "background"]},
+                    "image_2": {"type": "target_scene", "analyze": ["light_direction", "color_temperature", "shadow_hardness", "ambient_light"]}
+                },
+                "integration_steps": {
+                    "relighting": ["apply_scene_light_direction", "match_color_temperature", "create_matching_shadows", "add_ambient_occlusion"],
+                    "color_grading": ["match_scene_palette", "match_saturation", "match_exposure"],
+                    "shadows": ["cast_onto_surfaces", "match_direction", "match_softness", "add_contact_shadows"],
+                    "perspective": ["match_camera_angle", "scale_appropriately", "align_ground_plane"],
+                    "final_blend": ["match_sharpness", "match_depth_of_field", "match_film_grain"]
+                },
+                "success_criteria": {
+                    "required": ["looks_photographed_in_scene", "matched_lighting", "matched_colors", "correct_shadows", "no_visible_edges"]
+                },
+                "constraints": {
+                    "strict_mode": True,
+                    "never_allow": ["original_lighting", "original_colors", "missing_shadows", "pasted_on_look"]
+                }
+            }
+            base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
         else:
-            base_prompt = (
-                "You are REFINING and IMPROVING an existing image:\n\n"
-                
-                "ORIGINAL IMAGE:\n"
-                "- This is the base image you'll improve\n"
-                "- Keep main composition, subjects, layout\n\n"
-                
-                "YOUR TASK:\n"
-                "1. Understand current image\n"
-                "2. Apply user's improvement instructions\n"
-                "3. Keep overall composition intact\n"
-                "4. Make changes feel natural and cohesive\n"
-                "5. Enhance quality while preserving intent\n"
-            )
+            prompt_schema = {
+                "role": "image_refinement",
+                "objective": "Refine and improve existing image",
+                "inputs": {
+                    "image_1": {"type": "base_image", "preserve": ["composition", "subjects", "layout"]}
+                },
+                "execution_steps": [
+                    "Understand current image",
+                    "Apply user's improvement instructions",
+                    "Keep composition intact",
+                    "Make changes natural and cohesive",
+                    "Enhance quality while preserving intent"
+                ]
+            }
+            base_prompt = f"PROMPT_SCHEMA:\n{json.dumps(prompt_schema, ensure_ascii=False, indent=2)}"
         
         if user_prompt.strip():
             return f"{base_prompt}\n\nUSER'S EDIT INSTRUCTIONS:\n{user_prompt.strip()}"
@@ -1195,9 +630,15 @@ class GeminiAPI:
             original_image = Image.open(image_path)
             print(f"[GEMINI] Original image: {original_image.size}, mode: {original_image.mode}")
             
+            # Add dimensions to prompt if specified
+            orig_w, orig_h = original_image.size
+            target_w = width if width > 0 else orig_w
+            target_h = height if height > 0 else orig_h
+            prompt_with_dims = f"{prompt}\n\nOUTPUT_DIMENSIONS: {target_w}x{target_h} pixels (preserve this aspect ratio)"
+            
             # Build contents - order matters!
             # CRITICAL: For style transfer, reference comes FIRST!
-            contents = [prompt]
+            contents = [prompt_with_dims]
             
             # Add reference FIRST if provided (for style transfer priority)
             if reference_path:
@@ -1230,7 +671,7 @@ class GeminiAPI:
                     resolution_str = "4K"
                 elif width >= 2048 or height >= 2048:
                     resolution_str = "2K"
-                print(f"📏 [GEMINI] Edit Resolution (Forced): {width}x{height} -> {resolution_str}")
+                print(f"[GEMINI] Edit Resolution (Forced): {width}x{height} -> {resolution_str}")
             else:
                 # Auto-detect from input
                 w, h = original_image.size
@@ -1238,15 +679,30 @@ class GeminiAPI:
                     resolution_str = "4K"
                 elif w >= 2048 or h >= 2048:
                     resolution_str = "2K"
-                print(f"📏 [GEMINI] Edit Resolution (Auto): {w}x{h} -> {resolution_str}")
+                print(f"[GEMINI] Edit Resolution (Auto): {w}x{h} -> {resolution_str}")
                 
-            # Configure generation with resolution
+            # Configure generation with resolution and aspect ratio
+            # Calculate aspect ratio from dimensions
+            def calculate_aspect_ratio_edit(w, h):
+                ratio = w / h if h > 0 else 1.0
+                ratios = {"1:1": 1.0, "16:9": 16/9, "9:16": 9/16, "4:3": 4/3, "3:2": 3/2}
+                return min(ratios.items(), key=lambda x: abs(x[1] - ratio))[0]
+            
+            # Use forced dimensions if provided, otherwise use original image size
+            if width > 0 and height > 0:
+                aspect_ratio_str = calculate_aspect_ratio_edit(width, height)
+            else:
+                orig_w, orig_h = original_image.size
+                aspect_ratio_str = calculate_aspect_ratio_edit(orig_w, orig_h)
+            
+            print(f"[GEMINI] Edit aspect ratio: {aspect_ratio_str}")
+            
             try:
                 # Try to use the structure that worked for generation
                 if hasattr(types, 'ImageConfig'):
                     img_conf = types.ImageConfig(
                         image_size=resolution_str,
-                        aspect_ratio="1:1" # Default, but resolution_str should take precedence for size
+                        aspect_ratio=aspect_ratio_str
                     )
                     config = types.GenerateContentConfig(
                         temperature=0.7,
@@ -1262,12 +718,12 @@ class GeminiAPI:
                         "responseModalities": ["IMAGE"],
                         "imageConfig": {
                             "imageSize": resolution_str,
-                            "aspectRatio": "1:1"
+                            "aspectRatio": aspect_ratio_str
                         }
                     }
                     print("[GEMINI] Using dictionary config for edit")
             except Exception as e:
-                print(f"⚠️ [GEMINI] Edit config setup failed: {e}")
+                print(f"[GEMINI] Edit config setup failed: {e}")
                 config = types.GenerateContentConfig(
                     temperature=0.7,
                     candidate_count=1,
@@ -1371,15 +827,25 @@ class GeminiAPI:
             }
             
             # Determine resolution
+            # Determine resolution and aspect ratio for REST
             resolution_str = "1K"
+            aspect_ratio_str = "1:1"
             
+            # Helper to calculate aspect ratio
+            def calculate_aspect_ratio_rest(w, h):
+                ratio = w / h if h > 0 else 1.0
+                ratios = {"1:1": 1.0, "16:9": 16/9, "9:16": 9/16, "4:3": 4/3, "3:2": 3/2}
+                return min(ratios.items(), key=lambda x: abs(x[1] - ratio))[0]
+
             if width > 0 and height > 0:
                 # User forced resolution
                 if width >= 4096 or height >= 4096:
                     resolution_str = "4K"
                 elif width >= 2048 or height >= 2048:
                     resolution_str = "2K"
-                print(f"📏 [GEMINI] REST Edit Resolution (Forced): {width}x{height} -> {resolution_str}")
+                
+                aspect_ratio_str = calculate_aspect_ratio_rest(width, height)
+                print(f"[GEMINI] REST Edit Resolution (Forced): {width}x{height} -> {resolution_str}, Aspect: {aspect_ratio_str}")
             else:
                 # Auto-detect
                 try:
@@ -1390,9 +856,11 @@ class GeminiAPI:
                                 resolution_str = "4K"
                             elif w >= 2048 or h >= 2048:
                                 resolution_str = "2K"
-                            print(f"📏 [GEMINI] REST Edit Resolution (Auto): {w}x{h} -> {resolution_str}")
+                            
+                            aspect_ratio_str = calculate_aspect_ratio_rest(w, h)
+                            print(f"[GEMINI] REST Edit Resolution (Auto): {w}x{h} -> {resolution_str}, Aspect: {aspect_ratio_str}")
                 except Exception as e:
-                    print(f"⚠️ [GEMINI] Could not detect image size for REST: {e}")
+                    print(f"[GEMINI] Could not detect image size for REST: {e}")
             
             payload = {
                 "contents": [{"parts": parts}],
@@ -1403,7 +871,7 @@ class GeminiAPI:
                     "responseModalities": ["IMAGE"],
                     "imageConfig": {
                         "imageSize": resolution_str,
-                        "aspectRatio": "1:1"
+                        "aspectRatio": aspect_ratio_str
                     }
                 }
             }
@@ -1468,13 +936,20 @@ class GeminiAPI:
             raise GeminiAPIError(f"Edit failed: {str(e)}")
 
 def get_api_key() -> Optional[str]:
-    """Get API key from environment variable or addon preferences"""
-    # Try environment variable first
+    """Get API key from environment variable or addon preferences.
+    
+    Priority:
+    1. GEMINI_API_KEY environment variable (most secure)
+    2. Addon Preferences (persists across sessions)
+    
+    Note: API key is NOT stored in .blend files for security (Issue #1 fix).
+    """
+    # 1. Environment variable (highest priority - most secure)
     api_key = os.environ.get('GEMINI_API_KEY', '').strip()
     if api_key:
         return api_key
     
-    # Try addon preferences
+    # 2. Addon preferences
     import bpy
     try:
         prefs = bpy.context.preferences.addons[__package__].preferences
@@ -1483,10 +958,21 @@ def get_api_key() -> Optional[str]:
     except:
         pass
     
-    # Try scene properties
+    return None
+
+
+def get_api_key_status() -> Optional[dict]:
+    """Get API key source for UI display (does not return the actual key)."""
+    # Check environment variable
+    if os.environ.get('GEMINI_API_KEY', '').strip():
+        return {"source": "Environment Variable (GEMINI_API_KEY)"}
+    
+    # Check addon preferences  
+    import bpy
     try:
-        if hasattr(bpy.context.scene, 'gemini_render') and bpy.context.scene.gemini_render.api_key.strip():
-            return bpy.context.scene.gemini_render.api_key.strip()
+        prefs = bpy.context.preferences.addons[__package__].preferences
+        if hasattr(prefs, 'api_key') and prefs.api_key.strip():
+            return {"source": "Addon Preferences"}
     except:
         pass
     

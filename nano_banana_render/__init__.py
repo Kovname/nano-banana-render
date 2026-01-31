@@ -1,14 +1,25 @@
 bl_info = {
     "name": "Nano Banana Pro Render",
-    "blender": (4, 5, 0),
+    "blender": (4, 5, 0),  # Minimum version, supports up to 5.0+
     "category": "Render", 
-    "version": (2, 0, 0),
+    "version": (2, 1, 0),
     "author": "Kovname",
     "description": "Professional AI rendering and editing suite for Blender. Transform depth maps and edit renders with AI. Supports mask-based editing, style transfer, and iterative refinement.",
     "location": "3D Viewport > N Panel > Nano Banana Pro, Image Editor > N Panel > Nano Banana Pro Edit",
     "doc_url": "https://github.com/kovname/nano-banana-render",
     "tracker_url": "https://github.com/kovname/nano-banana-render/issues",
 }
+
+# Blender version compatibility helpers
+def get_blender_version():
+    """Get Blender version as tuple (major, minor, patch)"""
+    import bpy
+    return bpy.app.version
+
+def is_blender_5():
+    """Check if running on Blender 5.0+"""
+    import bpy
+    return bpy.app.version >= (5, 0, 0)
 
 import bpy
 from bpy.types import AddonPreferences
@@ -94,6 +105,7 @@ core_classes = (
     operators.GEMINI_OT_load_image_as_reference,
     operators.GEMINI_OT_open_api_key_url,
     operators.GEMINI_OT_validate_api_key,
+    operators.GEMINI_OT_open_preferences,
 )
 
 # Optional debug classes (register separately to avoid conflicts)
@@ -124,7 +136,7 @@ def register():
     # Register Image Editor module
     try:
         image_editor.register()
-        print("✅ [NANO BANANA] Image Editor panel registered")
+        print("[NANO BANANA] Image Editor panel registered")
     except Exception as e:
         print(f"Warning: Could not register Image Editor: {e}")
     

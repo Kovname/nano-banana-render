@@ -127,15 +127,15 @@ class ImageEditorProperties(PropertyGroup):
         default=False
     )
     
-    # Resolution selection for editing
+    # Resolution selection for editing (aspect ratio preserved from input)
     resolution: bpy.props.EnumProperty(
         name="Resolution",
-        description="Choose output resolution for the edit",
+        description="Choose output resolution (aspect ratio preserved from input)",
         items=[
-            ('AUTO', "Auto (Match Input)", "Keep original resolution"),
-            ('1024', "1k (1024x1024)", "Force 1k resolution"),
-            ('2048', "2k (2048x2048)", "Force 2k resolution"),
-            ('4096', "4k (4096x4096)", "Force 4k resolution"),
+            ('AUTO', "Auto (Match Input)", "Keep original resolution and aspect ratio"),
+            ('1024', "1K Base", "Scale to 1K base (preserves aspect ratio)"),
+            ('2048', "2K Base", "Scale to 2K base (preserves aspect ratio)"),
+            ('4096', "4K Base", "Scale to 4K base (preserves aspect ratio)"),
         ],
         default='AUTO',
     )
@@ -392,22 +392,12 @@ class NANO_BANANA_OT_apply_edit(Operator):
                     print(f"[NANO BANANA] image.save() failed: {e}, trying save_render()...")
                     image.save_render(image_path)
                 
-                print(f"[NANO BANANA] ✅ Saved: {image_path}")
-                print(f"[NANO BANANA]    Size: {image.size[0]}x{image.size[1]}")
-                print(f"[NANO BANANA]    Channels: {image.channels}")
+                print(f"[NANO BANANA] Saved: {image_path}")
                 
                 # Verify file was created
-                if os.path.exists(image_path):
-                    file_size = os.path.getsize(image_path)
-                    print(f"[NANO BANANA] ✅ File exists: {file_size} bytes")
-                else:
-                    # Last resort: try save_render if save() didn't throw but also didn't save (Render Result quirk)
-                    print(f"[NANO BANANA] File missing after save(), trying save_render()...")
+                if not os.path.exists(image_path):
+                    # Last resort: try save_render
                     image.save_render(image_path)
-                    if os.path.exists(image_path):
-                         print(f"[NANO BANANA] ✅ File created with save_render()")
-                    else:
-                         print(f"[NANO BANANA] ❌ ERROR: File not created!")
                     
             finally:
                 # Restore original settings
@@ -428,7 +418,6 @@ class NANO_BANANA_OT_apply_edit(Operator):
                     ref_image.filepath_raw = reference_path
                     ref_image.file_format = 'PNG'
                     ref_image.save()
-                    print(f"[NANO BANANA] ✅ Saved reference image: {reference_path}")
                 finally:
                     ref_image.filepath_raw = ref_original_filepath
                     ref_image.file_format = ref_original_format
