@@ -44,7 +44,7 @@ We've completely rewritten the core to be leaner and faster.
 
 |            Render Panel             |             Editor Studio             |
 | :---------------------------------: | :-----------------------------------: |
-| <img src="docs/images/ui_main.png" height="300"> | <img src="docs/images/ui_editor.png" height="300"> |
+| <img src="docs/images/ui_main.png" width="100%"> | <img src="docs/images/ui_editor.png" width="100%"> |
 
 _Simple controls for generation, powerful tools for editing._
 
@@ -112,13 +112,13 @@ Turn blockouts into art using Mist Pass
 Uses geometry + reference image style
 | Depth Input | Style Reference | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/depth_input.png" height="150"> | <img src="docs/images/style_ref.png" height="150"> | <img src="docs/images/depth_style_result.png" height="150"> |
+| <img src="docs/images/depth_input.png" height="300"> | <img src="docs/images/style_ref.png" height="300"> | <img src="docs/images/depth_style_result.png" height="300"> |
 
 **Without Style Reference**
 Uses geometry + text prompt only
 | Depth Input | Text Prompt | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/depth_input_2.png" height="150"> | "Make it ultra realistic, like a photo taken on an iPhone" | <img src="docs/images/depth_prompt_result.png" height="150"> |
+| <img src="docs/images/depth_input_2.png" height="300"> | "Make it ultra realistic, like a photo taken on an iPhone" | <img src="docs/images/depth_prompt_result.png" height="300"> |
 
 ### 2. Regular Render Mode
 
@@ -128,13 +128,15 @@ Enhance existing Eevee/Cycles renders
 Transfer style while keeping exact composition
 | Original Render | Style Reference | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/reg_render.png" height="150"> | <img src="docs/images/reg_style.png" height="150"> | <img src="docs/images/reg_style_result.png" height="150"> |
+| <img src="docs/images/reg_render.png" height="300"> | <img src="docs/images/reg_style.png" height="300"> | <img src="docs/images/reg_style_result.png" height="300"> |
 
 **Without Style Reference**
 Change lighting/mood with text
-| Original Render | Text Prompt | Result |
-| :---: | :---: | :---: |
-| <img src="docs/images/reg_render_2.png" height="150"> | "Make a sketch on paper with a regular pencil." | <img src="docs/images/reg_prompt_result.png" height="150"> |
+| Step | Content |
+| :--- | :--- |
+| **Original** | <img src="docs/images/reg_render_2.png" width="100%"> |
+| **Prompt** | "Make the scene photorealistic with dark atmospheric lighting, a stormy sky, wet rock textures, and replace the character with a knight." |
+| **Result** | <img src="docs/images/reg_prompt_result.png" width="100%"> |
 
 ### 3. AI Editor Studio
 
@@ -144,19 +146,19 @@ Post-processing magic
 Draw mask + Prompt
 | Original | Mask | Prompt | Result |
 | :---: | :---: | :---: | :---: |
-| <img src="docs/images/edit_orig.png" height="150"> | <img src="docs/images/edit_mask.png" height="150"> | "Add a red car" | <img src="docs/images/edit_result.png" height="150"> |
+| <img src="docs/images/edit_orig.png" height="200"> | <img src="docs/images/edit_mask.png" height="200"> | "Add a red car" | <img src="docs/images/edit_result.png" height="200"> |
 
 **Object Integration**
 Draw mask + Reference Image + Prompt
 | Original | Mask | Reference Object | Result |
 | :---: | :---: | :---: | :---: |
-| <img src="docs/images/edit_result.png" height="150"> | <img src="docs/images/int_mask.png" height="150"> | <img src="docs/images/int_ref.png" height="150"> | <img src="docs/images/int_result.png" height="150"> |
+| <img src="docs/images/edit_result.png" height="200"> | <img src="docs/images/int_mask.png" height="200"> | <img src="docs/images/int_ref.png" height="200"> | <img src="docs/images/int_result.png" height="200"> |
 
 **Full Image Edit**
 Prompt only (no mask)
 | Original | Prompt | Result |
 | :---: | :---: | :---: |
-| <img src="docs/images/int_result.png" height="150"> | "Make it night time, raining" | <img src="docs/images/full_result.png" height="150"> |
+| <img src="docs/images/int_result.png" height="300"> | "Make it night time, raining" | <img src="docs/images/full_result.png" height="300"> |
 
 ---
 
