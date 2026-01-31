@@ -4,9 +4,11 @@
 
 Transform your Blender scenes into stunning photorealistic images using the latest **Google Gemini 3 Pro** AI. Now with full **Blender 5.0+ support**, **Intelligent Aspect Ratio Handling**, and **Secure API Integration**.
 
+[![Version](https://img.shields.io/badge/Version-2.1.0-green.svg?logo=github)](https://github.com/kovname/nano-banana-render/releases)
 [![Blender](https://img.shields.io/badge/Blender-4.5%2B%7C5.0%2B-orange?logo=blender)](https://www.blender.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-2.1.0-green.svg)](https://github.com/kovname/nano-banana-render/releases)
+[![Downloads](https://img.shields.io/github/downloads/kovname/nano-banana-render/total?color=brightgreen)](https://github.com/kovname/nano-banana-render/releases)
+
 
 [![Support me on Ko-fi](https://storage.ko-fi.com/cdn/kofi3.png)](https://ko-fi.com/kovname)
 
