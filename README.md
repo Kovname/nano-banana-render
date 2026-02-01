@@ -188,6 +188,11 @@ Share your renders and let's make this better together!
 
 <div align="center">
 
+
+<img src="https://kovname.w10.site/assets/icons/git%20logo.svg" width="120" alt="Kovname Logo">
+
+<br>
+
 **Made with 🍌 by Kovname**
 
 [Star](https://github.com/kovname/nano-banana-render) • [Download](https://github.com/kovname/nano-banana-render/releases) • [Issues](https://github.com/kovname/nano-banana-render/issues)
