@@ -28,15 +28,16 @@ class GeminiAPIError(Exception):
 class GeminiAPI:
     """Client for Google Gemini API with official SDK"""
     
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, model: str = None):
         """Initialize Gemini API client with SDK or REST fallback."""
         self.api_key = api_key
+        self._model_name = model or "gemini-3.1-flash-image-preview"
         
         if GENAI_AVAILABLE and PIL_AVAILABLE:
             try:
                 genai.configure(api_key=api_key)
                 self.client = genai.Client()
-                self.model = "gemini-3-pro-image-preview"
+                self.model = self._model_name
                 self.use_sdk = True
             except Exception as e:
                 print(f"[GEMINI] SDK setup failed: {e}, falling back to REST")
@@ -49,7 +50,7 @@ class GeminiAPI:
     def _setup_rest_fallback(self):
         """Setup REST API fallback"""
         self.base_url = "https://generativelanguage.googleapis.com/v1beta"
-        self.model = "models/gemini-3-pro-image-preview"
+        self.model = f"models/{self._model_name}"
         
     def _build_prompt(self, user_prompt: str, has_reference: bool = False, is_color_render: bool = False) -> str:
         """Build complete prompt using structured JSON schema for token efficiency."""

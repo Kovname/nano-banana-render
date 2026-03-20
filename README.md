@@ -1,106 +1,95 @@
-# 🍌 Nano Banana Pro Render
+# 🍌 Nano Banana Render
 
-**Professional AI Rendering & Editing Suite for Blender**
+**AI Render Engine for Blender** — not just an addon, a whole new render engine.
 
-Transform your Blender scenes into stunning photorealistic images using the latest **Google Gemini 3 Pro** AI. Now with full **Blender 5.0+ support**, **Intelligent Aspect Ratio Handling**, and **Secure API Integration**.
+Nano Banana integrates directly into Blender as a **standalone render engine** alongside Cycles and Eevee. Select it from the render engine dropdown and start generating photorealistic images from simple blockouts, depth maps, or existing renders — powered by **Google Gemini AI**.
 
-[![Version](https://img.shields.io/badge/Version-2.1.0-green.svg?logo=github)](https://github.com/kovname/nano-banana-render/releases)
+<p align="center">
+  <a href="https://nanode.tech">🌐 nanode.tech</a> •
+  <a href="https://github.com/kovname/nano-banana-render/releases">📦 Download</a> •
+  <a href="https://github.com/kovname/nano-banana-render/issues">🐛 Report Bug</a>
+</p>
+
+[![Version](https://img.shields.io/badge/Version-2.5.0_Beta-FFC107.svg?logo=github&logoColor=white)](https://github.com/kovname/nano-banana-render/releases)
 [![Blender](https://img.shields.io/badge/Blender-4.5%2B%7C5.0%2B-orange?logo=blender)](https://www.blender.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/kovname/nano-banana-render/total?color=brightgreen)](https://github.com/kovname/nano-banana-render/releases)
 
+---
 
-[![Support me on Ko-fi](https://storage.ko-fi.com/cdn/kofi3.png)](https://ko-fi.com/kovname)
+> [IMPORTANT]
+> **This is a beta release.** We are currently waiting for payment system approval. In the meantime, all users receive **100 free credits on signup** — no credit card required. We'd love your help testing! If you find bugs or have ideas, please use the **Feedback button** inside the addon (and earn **+50 bonus credits** for submission!).
 
 ---
 
-## What's New in v2.1
+## ☁️ Supported by Google Cloud for Startups
 
-### 🚀 Blender 5.0 & Eevee Next Support
-Fully compatible with the latest Blender 5.0 release and the new Eevee Next rendering engine. The addon automatically detects your version and optimizes the workflow accordingly.
+<p align="center">
+  <img src="https://upload.wikimedia.org/wikipedia/commons/5/51/Google_Cloud_logo.svg" width="200" alt="Google Cloud">
+</p>
 
-### 📐 Intelligent Aspect Ratio
-Say goodbye to square crops! Nano Banana Pro now respects your scene's aspect ratio perfectly.
-- **Auto-Detection**: The AI automatically matches your scene's proportions (16:9, 4:3, Portrait, etc.).
-- **Smart Scaling**: Choose a base resolution (1K, 2K, 4K), and we'll scale it proportionally to fit your composition.
-
-### 🔒 Enhanced Security
-Your API keys are now safer than ever.
-- **Secure Storage**: API keys are stored in Blender Preferences or Environment Variables (`GEMINI_API_KEY`).
-- **No Leaks**: Keys are never saved inside `.blend` files, making it safe to share your project files.
-
-### 💾 Persistent History
-Never lose a render again. The new history guard system ensures your generated images are preserved in memory even if not immediately saved to disk.
-
-### 🧠 Structured Semantic Prompting (New Architecture)
-We've completely rewritten the core to be leaner and faster.
-- **JSON Technical Specs**: Instead of "talking" to the AI, we now send strict JSON technical specifications.
-- **Token Economy**: Optimized code removes fluff, saving tokens and speeding up generation.
-- **Zero Hallucinations**: Strict context isolation ensures the AI follows instructions with surgical precision.
+This project is proudly supported by the **Google Cloud for Startups** program. Their generous cloud credits make it possible for us to run the AI infrastructure and offer free credits to testers during this beta period. A huge thank you to Google Cloud for believing in independent creators and open-source tools! 🙏
 
 ---
 
-## Interface
+## What Is Nanode?
 
-### The Render Panel & Editor Studio
+We've completely rebuilt the architecture. Nanode is no longer a typical N-panel addon — **Nano Banana** now registers as a **full render engine** in Blender, just like Cycles or Eevee. Select it from the render engine dropdown, press **F12**, and render with AI.
 
-|            Render Panel             |             Editor Studio             |
-| :---------------------------------: | :-----------------------------------: |
-| <img src="docs/images/ui_main.png" width="100%"> | <img src="docs/images/ui_editor.png" width="100%"> |
+Inside the engine you can choose between different AI models:
 
-_Simple controls for generation, powerful tools for editing._
+| Model | Based On | Best For |
+| :--- | :--- | :--- |
+| **Nano Banana** | Gemini 2.5 Flash | Fast drafts, iteration |
+| **Nano Banana 2** | Gemini 3.1 Flash | Balanced speed & quality |
+| **Nano Banana Pro** | Gemini 3 Pro | Maximum quality renders |
+
+Press **F12** and render just like you would with Cycles — except the AI generates the final image.
 
 ---
 
 ## Core Features
 
-### 1. The Render Engine (3D View)
+### 🎬 Render Engine (3D View)
+- **Depth Map Render (Mist)** — Block out shapes, let AI create photorealistic results
+- **Regular Render (Eevee I2I)** — Enhance Eevee/Cycles renders with AI
+- **Style Transfer** — Apply the look of any reference image to your scene
+- **Resolution Control** — 1K, 2K, or 4K with automatic aspect ratio preservation
 
-Turn simple geometry into finished art.
+### ✏️ AI Image Editor (Editor Studio)
+- **Inpainting** — Draw a mask, describe what to add
+- **Object Integration** — Place reference objects with matched lighting
+- **Full Image Edit** — Change mood, time of day, weather with a prompt
+- **History System** — Jump back to any previous state
 
-- **Depth Map Render (Mist)**: Use a simple mist pass to define geometry, let AI handle the rest. Perfect for rapid concepting from blockouts.
-- **Regular Render (Image-to-Image)**: Enhance your existing Eevee/Cycles renders with AI magic. Use a prompt to change the style, lighting, or details of your scene while keeping the original composition.
-- **Style Transfer**: Apply the exact look/feel of _any_ reference image to your scene.
-
-### 2. The Studio (Image Editor)
-
-Refine and perfect your results.
-
-- **Object Integration**: Add people, furniture, or effects that perfectly match your scene's lighting.
-- **Iterative Workflow**: Make change after change until it's perfect.
-- **History System**: Jump back to any previous state instantly.
+### 🔐 Account & Credits
+- **Google Login** — One-click sign in, no API keys to manage
+- **Credit System** — 100 free credits on signup, earn more via feedback
+- **Secure** — All generation happens on our servers, nothing stored locally
 
 ---
 
-## Workflow Guide
+## Getting Started
 
-### Part 1: Generating the Base
+### 1. Install the Addon
 
-_Located in 3D View > N-Panel > Nano Banana Pro_
+1. Download the latest `.zip` from [Releases](https://github.com/kovname/nano-banana-render/releases)
+2. In Blender: `Edit > Preferences > Add-ons > Install...` → select the zip
+3. Enable **Nanode AI Render Engine**
 
-1.  **Set Up Scene**: Block out your shapes. No need for complex materials.
-2.  **Choose Resolution**: Select **1K**, **2K**, or **4K**. The aspect ratio will match your scene automatically.
-3.  **Add Style (Optional)**: Load a reference image to define the mood.
-4.  **Render**: Click "Generate AI Render".
+### 2. Create an Account
 
-### Part 2: Refining & Inpainting
+1. In the addon's Render panel, click **Login with Google**
+2. Sign in with your Google account — you'll receive **100 free credits** instantly
+3. The addon auto-connects to Blender, you're ready to render
 
-_Located in Image Editor > N-Panel > Nano Banana Pro Edit_
+### 3. Your First Render
 
-1.  **Open Image**: Your render automatically opens here.
-2.  **Inpaint (Optional)**:
-    - Click **"Inpainting"**.
-    - Click **"Draw"** and paint over the area you want to change.
-    - Type a prompt (e.g., "add a red sports car").
-    - Click **"Render"**.
-3.  **Integrate Object (Optional)**:
-    - Enable **"Reference Image"** and load a photo of an object (e.g., a specific chair).
-    - Use **"Inpainting"** to draw a mask where you want it.
-    - Prompt: "Integrate this object here".
-    - Click **"Render"**.
-4.  **Edit Whole Image**:
-    - Type a prompt (e.g., "make it night time", "add rain").
-    - Click **"Apply AI Edit"**.
+1. Select **Nano Banana** (or Pro) from the render engine dropdown
+2. Set up your scene with basic geometry
+3. Write a prompt describing your desired result
+4. Press **F12** or click **Generate AI Render**
+5. Open the result in the **Image Editor** to refine with AI edits
 
 ---
 
@@ -164,37 +153,38 @@ Prompt only (no mask)
 
 ---
 
-## Installation & Setup
+## Feedback & Bug Reports
 
-1.  **Get API Key**: Visit [Google AI Studio](https://aistudio.google.com/) and create a free API key.
-2.  **Download**: Get the latest `.zip` from [Releases](https://github.com/kovname/nano-banana-render/releases).
-3.  **Install**: In Blender, go to `Edit > Preferences > Add-ons > Install...` and select the zip.
-4.  **Configure**:
-    - Go to Add-on Preferences (expand the addon details).
-    - Paste your API key in the `Gemini API Key` field.
-    - *Alternatively, set a `GEMINI_API_KEY` environment variable on your system.*
+Found a bug? Have an idea? We need your help to make this better!
 
-> **Note**: Google provides a generous free tier for the Gemini API, but you **must enable billing** in Google Cloud Console to access the Gemini 3 Pro model used by this addon.
+- **In-addon Feedback** — Click the 💬 **Feedback** button in the editor panel. You'll earn **+50 credits** for your first submission!
+- **GitHub Issues** — [Open an issue](https://github.com/kovname/nano-banana-render/issues) for detailed bug reports
+- **Email** — Reach us at **contact@nanode.tech**
+
+Every piece of feedback helps shape the future of Nano Banana. We read everything. 🍌
 
 ---
 
-## Contributing
+## Roadmap
 
-Found a bug? Want a feature? [Open an issue!](https://github.com/kovname/nano-banana-render/issues)
+There is **a lot** of exciting stuff ahead. This beta is just the beginning — we're working on new features, better models, and tighter Blender integration. Stay tuned!
 
-Share your renders and let's make this better together!
+---
+
+## Support the Project
+
+If you find Nanode useful, the best way to support us is:
+
+⭐ **[Star this repo](https://github.com/kovname/nano-banana-render)** — it helps others discover the project and motivates us to keep building!
 
 ---
 
 <div align="center">
 
+**Made with 🍌 by [Kovname](https://github.com/kovname)**
 
-<img src="https://kovname.w10.site/assets/icons/git%20logo.svg" width="120" alt="Kovname Logo">
+Thank you to everyone testing the beta — your feedback is invaluable.
 
-<br>
-
-**Made with 🍌 by Kovname**
-
-[Star](https://github.com/kovname/nano-banana-render) • [Download](https://github.com/kovname/nano-banana-render/releases) • [Issues](https://github.com/kovname/nano-banana-render/issues)
+[⭐ Star](https://github.com/kovname/nano-banana-render) • [📦 Download](https://github.com/kovname/nano-banana-render/releases) • [🐛 Issues](https://github.com/kovname/nano-banana-render/issues) • [🌐 nanode.tech](https://nanode.tech)
 
 </div>

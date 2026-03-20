@@ -1,13 +1,13 @@
 bl_info = {
-    "name": "Nano Banana Pro Render",
+    "name": "Nanode AI Render Engine",
     "blender": (4, 5, 0),  # Minimum version, supports up to 5.0+
     "category": "Render", 
-    "version": (2, 1, 0),
+    "version": (2, 5, 0),
     "author": "Kovname",
-    "description": "Professional AI rendering and editing suite for Blender. Transform depth maps and edit renders with AI. Supports mask-based editing, style transfer, and iterative refinement.",
-    "location": "3D Viewport > N Panel > Nano Banana Pro, Image Editor > N Panel > Nano Banana Pro Edit",
-    "doc_url": "https://github.com/kovname/nano-banana-render",
-    "tracker_url": "https://github.com/kovname/nano-banana-render/issues",
+    "description": "Professional AI rendering and editing suite for Blender — v2.5.0",
+    "location": "Render Properties (select 'Nano Banana' engine), Image Editor > N Panel > Nano Banana Pro Edit",
+    "doc_url": "https://nanode.tech/",
+    "tracker_url": "https://nanode.tech/",
 }
 
 # Blender version compatibility helpers
@@ -42,6 +42,10 @@ if "bpy" in locals():
         importlib.reload(image_editor)
     if "image_edit_thread" in locals():
         importlib.reload(image_edit_thread)
+    if "render_engine" in locals():
+        importlib.reload(render_engine)
+    if "beta_api" in locals():
+        importlib.reload(beta_api)
 
 # Import our modules
 from . import ui_panel
@@ -51,31 +55,79 @@ from . import gemini_api
 from . import threading_utils
 from . import image_editor
 from . import image_edit_thread
+from . import render_engine
+from . import beta_api
 
 class NanoBananaPreferences(AddonPreferences):
     bl_idname = __name__
 
-    api_key: StringProperty(
+    beta_token: StringProperty(
         name="API Key",
-        description="AI API Key for generating stunning renders",
+        description="Your API key (from Google login) or beta access token",
         default="",
         subtype='PASSWORD',
     )
 
+    # Account info display — show email on logged-in state
     def draw(self, context):
         layout = self.layout
+        from . import operators as ops
         
-        # API Key section
+        # Main access section
         box = layout.box()
-        box.label(text="API Configuration:", icon='KEYFRAME_HLT')
-        box.prop(self, "api_key")
+        box.label(text="Account:", icon='USER')
+        
+        if self.beta_token.strip():
+            email = ops._get_user_email()
+            name = ops._get_user_name()
+            
+            if email:
+                # Show logged-in state with email (no checkmarks)
+                box.label(text=email, icon='LINKED')
+                if name:
+                    row = box.row()
+                    row.scale_y = 0.7
+                    row.label(text=f"     {name}")
+            else:
+                # Token is set but no email (beta user or manual key)
+                if self.beta_token.strip().startswith("nk_"):
+                    box.label(text="Nanode Account", icon='LINKED')
+                elif self.beta_token.strip().startswith("AIza"):
+                    box.label(text="API", icon='LINKED')
+                else:
+                    box.label(text="Beta Tester", icon='LINKED')
+            
+            # Refresh + logout
+            row = box.row(align=True)
+            if not self.beta_token.strip().startswith("AIza"):
+                row.operator("banana.refresh_balance", text="Refresh Balance", icon='FILE_REFRESH')
+            row.operator("banana.logout", text="Log Out", icon='PANEL_CLOSE')
+            
+            # Buy Credits for credit users
+            if self.beta_token.strip().startswith("nk_"):
+                row = box.row()
+                row.scale_y = 1.2
+                row.operator("banana.open_store", text="Buy More Credits", icon='PLUS')
+            
+            # Advanced: show API key field
+            col = box.column()
+            col.scale_y = 0.8
+            col.prop(self, "beta_token")
+        else:
+            # No key — show login button prominently
+            col = box.column(align=True)
+            col.scale_y = 1.5
+            col.operator("banana.google_login", text="Login with Google", icon='URL')
+            
+            box.separator()
+            box.label(text="Or paste API key manually:", icon='INFO')
+            box.prop(self, "beta_token")
         
         # Debug section
         box = layout.box()
         box.label(text="Debug Tools:", icon='TOOL_SETTINGS')
         
         row = box.row(align=True)
-        # Check if debug operators are available
         try:
             if hasattr(bpy.types, 'GEMINI_OT_reset_state'):
                 row.operator("gemini.reset_state", text="Reset UI State", icon='FILE_REFRESH')
@@ -83,8 +135,6 @@ class NanoBananaPreferences(AddonPreferences):
                 row.operator("gemini.open_console", text="Open Console", icon='CONSOLE')
         except:
             row.label(text="Debug operators not available", icon='INFO')
-            
-        box.label(text="Note: Debug tools are also available in Blender's Console", icon='INFO')
 
 # Registration - Core classes first
 core_classes = (
@@ -92,7 +142,12 @@ core_classes = (
     ui_panel.GeminiRenderHistoryItem,
     ui_panel.GeminiRenderProperties,
     ui_panel.BANANA_PT_render_panel,
+    ui_panel.BANANA_PT_prompt,
+    ui_panel.BANANA_PT_render_mode,
+    ui_panel.BANANA_PT_mist,
+    ui_panel.BANANA_PT_style_reference,
     ui_panel.BANANA_PT_history_panel,
+    ui_panel.BANANA_PT_beta_npanel,
     operators.GEMINI_OT_ai_render,
     operators.GEMINI_OT_stop_render,
     operators.GEMINI_OT_load_history,
@@ -106,6 +161,14 @@ core_classes = (
     operators.GEMINI_OT_open_api_key_url,
     operators.GEMINI_OT_validate_api_key,
     operators.GEMINI_OT_open_preferences,
+    operators.BANANA_OT_send_feedback,
+    operators.BANANA_OT_rate_generation,
+    operators.BANANA_OT_refresh_balance,
+    operators.BANANA_OT_toggle_feedback,
+    operators.BANANA_OT_google_login,
+    operators.BANANA_OT_logout,
+    operators.BANANA_OT_open_store,
+    operators.BANANA_OT_show_no_credits_popup,
 )
 
 # Optional debug classes (register separately to avoid conflicts)
@@ -118,7 +181,14 @@ debug_classes = (
 classes = core_classes + debug_classes
 
 def register():
-    # Register core classes first
+    # Register render engine first
+    try:
+        render_engine.register()
+        print("[NANO BANANA] Render engine registered")
+    except Exception as e:
+        print(f"Error registering render engine: {e}")
+    
+    # Register core classes
     for cls in core_classes:
         try:
             bpy.utils.register_class(cls)
@@ -149,8 +219,20 @@ def register():
         description="Index for history context menu",
         default=0
     )
+    
+    # Restore saved credentials on startup
+    try:
+        operators.restore_credentials_on_startup()
+    except Exception as e:
+        print(f"[NANO BANANA] Could not restore credentials: {e}")
 
 def unregister():
+    # Unregister render engine
+    try:
+        render_engine.unregister()
+    except:
+        pass
+    
     # Stop any background threads
     try:
         threading_utils.stop_thread_manager()

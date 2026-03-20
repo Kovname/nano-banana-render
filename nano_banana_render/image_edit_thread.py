@@ -16,7 +16,8 @@ class ImageEditThread(threading.Thread):
     def __init__(self, image_path: str, edit_prompt: str, 
                  mask_path: Optional[str], reference_path: Optional[str],
                  api_key: str, context, original_image_name: str, temp_dir: str,
-                 resolution: str = 'AUTO', original_size: tuple = (1024, 1024)):
+                 resolution: str = 'AUTO', original_size: tuple = (1024, 1024),
+                 model_name: str = None):
         super().__init__(daemon=True)
         
         self.image_path = image_path
@@ -29,6 +30,7 @@ class ImageEditThread(threading.Thread):
         self.temp_dir = temp_dir
         self.resolution = resolution
         self.original_size = original_size
+        self.model_name = model_name
         
         self.result_image_data = None
         self.error_message = None
@@ -41,67 +43,113 @@ class ImageEditThread(threading.Thread):
             # Update status
             self._update_status("Sending to AI...")
             
-            # Call Gemini API
-            from . import gemini_api
-            
-            api_client = gemini_api.GeminiAPI(self.api_key)
-            
-            print(f"[NANO BANANA] Calling edit_image API...")
-            print(f"  - Image: {self.image_path}")
-            print(f"  - Prompt: {self.edit_prompt[:100]}...")
-            print(f"  - Mask: {self.mask_path}")
-            print(f"  - Reference: {self.reference_path}")
-            print(f"  - Resolution Mode: {self.resolution}")
-            print(f"  - Original Size: {self.original_size}")
-            
-            # Resolve resolution while PRESERVING ASPECT RATIO
+            # Use original_size passed from the operator (Blender image.size)
+            # This is reliable — PIL may not work inside Blender's bundled Python
             orig_w, orig_h = self.original_size
-            aspect_ratio = orig_w / orig_h if orig_h > 0 else 1.0
+            print(f"[NANO BANANA] Original image size from Blender: {orig_w}x{orig_h}")
             
-            # Determine base resolution
-            if self.resolution == '4096':
-                base = 4096
-            elif self.resolution == '2048':
-                base = 2048
-            elif self.resolution == '1024':
-                base = 1024
-            else:  # AUTO
-                # Auto-detect base from original size
-                max_dim = max(orig_w, orig_h)
-                if max_dim > 2048:
-                    base = 4096
-                    print(f"[NANO BANANA] Auto-resolution: Detected large image ({max_dim}px) -> Setting 4K base")
-                elif max_dim > 1024:
-                    base = 2048
-                    print(f"[NANO BANANA] Auto-resolution: Detected medium image ({max_dim}px) -> Setting 2K base")
-                else:
-                    base = 1024
-                    print(f"[NANO BANANA] Auto-resolution: Detected standard image ({max_dim}px) -> Setting 1K base")
-            
-            # Calculate dimensions preserving aspect ratio
-            if aspect_ratio >= 1.0:
-                # Landscape or square
-                width = base
-                height = int(base / aspect_ratio)
+            # Sanity check — fallback to PIL only if original_size was somehow (0,0)
+            if orig_w <= 0 or orig_h <= 0:
+                try:
+                    from PIL import Image
+                    with Image.open(self.image_path) as img:
+                        orig_w, orig_h = img.size
+                    print(f"[NANO BANANA] PIL fallback size: {orig_w}x{orig_h}")
+                except Exception as e:
+                    orig_w, orig_h = 1024, 1024
+                    print(f"[NANO BANANA] Could not read image size, defaulting to 1024x1024: {e}")
+                
+            # Determine target dimensions based on requested resolution
+            max_dim = 1024
+            if self.resolution == '2048' or self.resolution == '2K':
+                max_dim = 2048
+            elif self.resolution == '4096' or self.resolution == '4K':
+                max_dim = 4096
+            elif self.resolution == '1024' or self.resolution == '1K':
+                max_dim = 1024
+            elif self.resolution == 'AUTO':
+                # AUTO: use the original image size, but at least 1024
+                max_dim = max(max(orig_w, orig_h), 1024)
+                
+            # Scale to target while preserving aspect ratio
+            if max(orig_w, orig_h) > 0:
+                scale = max_dim / max(orig_w, orig_h)
             else:
-                # Portrait
-                height = base
-                width = int(base * aspect_ratio)
+                scale = 1.0
+            width = int(orig_w * scale)
+            height = int(orig_h * scale)
+            print(f"[NANO BANANA] Edit target resolution: {width}x{height} (Mode: {self.resolution}, max_dim: {max_dim})")
+
+            if self.api_key.startswith("AIza"):
+                # ─── Direct Google API Mode ───
+                from .gemini_api import GeminiAPI
+                print(f"[NANO BANANA] Calling Google API directly for EDIT...")
+                gemini = GeminiAPI(api_key=self.api_key, model=self.model_name)
+                image_data, _ = gemini.edit_image(
+                    image_path=self.image_path,
+                    edit_prompt=self.edit_prompt,
+                    mask_path=self.mask_path,
+                    reference_image_path=self.reference_path,
+                    width=width,
+                    height=height
+                )
+                generation_id = ""
+                new_balance = -1
+            else:
+                # ─── Server Mode (Nanode API) ───
+                from . import beta_api
+                
+                print(f"[NANO BANANA] Calling beta_api.generate for INPAINT...")
+                print(f"  - Image: {self.image_path}")
+                print(f"  - Prompt: {self.edit_prompt[:100]}...")
+                print(f"  - Mask: {self.mask_path}")
+                print(f"  - Reference: {self.reference_path}")
+                
+                image_data, generation_id, new_balance = beta_api.generate(
+                    prompt=self.edit_prompt,
+                    model=self.model_name,
+                    input_image_path=self.image_path,
+                    reference_image_path=self.reference_path,
+                    mask_image_path=self.mask_path,
+                    gen_type="inpaint",
+                    width=width,
+                    height=height,
+                )
             
-            print(f"[NANO BANANA] Output dimensions: {width}x{height} (preserving aspect ratio {aspect_ratio:.2f})")
+            print(f"[NANO BANANA] Edit completed: {len(image_data)} bytes")
             
-            image_data, mime_type = api_client.edit_image(
-                image_path=self.image_path,
-                edit_prompt=self.edit_prompt,
-                mask_path=self.mask_path,
-                reference_image_path=self.reference_path,
-                width=width,
-                height=height
-            )
-            
-            print(f"[NANO BANANA] Edit completed: {len(image_data)} bytes, {mime_type}")
+            # Post-process: Enforce correct aspect ratio
+            # Gemini strictly outputs standard aspect ratios (e.g. 16:9). If our input was 16:10,
+            # it might stretch the result. Resizing it exactly back to target width/height fixes this.
+            try:
+                from PIL import Image
+                import io
+                
+                with Image.open(io.BytesIO(image_data)) as result_img:
+                    if result_img.size != (width, height):
+                        print(f"[NANO BANANA] Fixing aspect ratio: Resizing result from {result_img.size} to requested {width}x{height}")
+                        # Use high-quality resampling
+                        resample_filter = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+                        result_img = result_img.resize((width, height), resample_filter)
+                        
+                        out_bytes = io.BytesIO()
+                        # Ensure RGB before saving
+                        if result_img.mode not in ('RGB', 'RGBA'):
+                            result_img = result_img.convert('RGB')
+                        result_img.save(out_bytes, format='PNG')
+                        image_data = out_bytes.getvalue()
+            except Exception as e:
+                print(f"[NANO BANANA] Warning: Could not post-process result aspect ratio: {e}")
             
             self.result_image_data = image_data
+            
+            def update_scene_props():
+                if hasattr(bpy.context.scene, 'gemini_render'):
+                    props = bpy.context.scene.gemini_render
+                    props.beta_balance = new_balance
+                    props.last_generation_id = generation_id
+                    props.last_generation_rated = False
+            self._execute_in_main_thread(update_scene_props)
             
             # Load result into Blender (must be done in main thread)
             self._update_status("Loading result...")
@@ -193,13 +241,18 @@ class ImageEditThread(threading.Thread):
                 else:
                     print(f"[NANO BANANA] Warning: No Image Editor found to display result")
                 
-                # Clean up result temp directory after a delay
+                # Clean up result temp directory after a delay to prevent EXCEPTION_ACCESS_VIOLATION
                 import shutil
-                try:
-                    shutil.rmtree(result_temp_dir)
-                    print(f"[NANO BANANA] Cleaned up result temp dir")
-                except:
-                    pass
+                def delayed_cleanup():
+                    try:
+                        if os.path.exists(result_temp_dir):
+                            shutil.rmtree(result_temp_dir)
+                            print(f"[NANO BANANA] Cleaned up result temp dir")
+                    except Exception as e:
+                        print(f"[NANO BANANA] Delayed cleanup failed: {e}")
+                    return None
+                
+                bpy.app.timers.register(delayed_cleanup, first_interval=2.0)
                 
             except Exception as e:
                 print(f"[NANO BANANA] Error loading result: {e}")

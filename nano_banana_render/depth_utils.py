@@ -423,11 +423,15 @@ class DepthRenderer:
             self.temp_files.append(mist_output_path)
             
             try:
-                # Get 3D viewport area
+                # Get 3D viewport area, window, and screen
+                viewport_window = None
+                viewport_screen = None
                 viewport_area = None
                 for window in bpy.context.window_manager.windows:
                     for area in window.screen.areas:
                         if area.type == 'VIEW_3D':
+                            viewport_window = window
+                            viewport_screen = window.screen
                             viewport_area = area
                             break
                     if viewport_area:
@@ -528,17 +532,19 @@ class DepthRenderer:
                 
                 print("[GEMINI] Starting viewport render with mist from camera...")
                 
-                # Render viewport from camera view
+                # Execute viewport render
                 override_context = {
+                    'window': viewport_window,
+                    'screen': viewport_screen,
                     'scene': scene,
                     'area': viewport_area,
                     'region': viewport_area.regions[-1],
                     'space_data': space_data,
                 }
                 
-                # Execute viewport render
                 with bpy.context.temp_override(**override_context):
-                    bpy.ops.render.opengl(write_still=True)
+                    result = bpy.ops.render.opengl(write_still=True)
+                    print(f"[GEMINI] OpenGL mist render result: {result}")
                 
                 print(f"[GEMINI] Viewport mist render completed")
                 
@@ -1164,13 +1170,110 @@ class DepthRenderer:
                 print(f"[GEMINI] Resolution: {scene.render.resolution_x}x{scene.render.resolution_y} @ {scene.render.resolution_percentage}%")
                 
                 # Execute render
-                print("[GEMINI] Starting regular render...")
-                bpy.ops.render.render(write_still=True)
-                print(f"[GEMINI] Regular render completed: {render_path}")
+                # Execute viewport/OpenGL render instead of regular render to avoid infinite engine loop
+                print("[GEMINI] Starting regular Eevee viewport render...")
                 
-                # Verify file exists
+                # Find viewport area, window, screen to render from
+                viewport_window = None
+                viewport_screen = None
+                viewport_area = None
+                for window in bpy.context.window_manager.windows:
+                    for area in window.screen.areas:
+                        if area.type == 'VIEW_3D':
+                            viewport_window = window
+                            viewport_screen = window.screen
+                            viewport_area = area
+                            break
+                    if viewport_area:
+                        break
+                
+                if not viewport_area:
+                    raise DepthRenderError("No 3D viewport found for Eevee rendering")
+                    
+                space_data = None
+                for space in viewport_area.spaces:
+                    if space.type == 'VIEW_3D':
+                        space_data = space
+                        break
+                        
+                # Store viewport original settings
+                original_shading_type = space_data.shading.type
+                original_use_scene_lights = getattr(space_data.shading, 'use_scene_lights', None)
+                original_use_scene_world = getattr(space_data.shading, 'use_scene_world', None)
+                original_render_pass = getattr(space_data.shading, 'render_pass', None)
+                overlay = space_data.overlay
+                original_show_overlays = getattr(overlay, 'show_overlays', None)
+                original_show_gizmo = getattr(space_data, 'show_gizmo', None)
+                
+                original_region_3d = None
+                for region in viewport_area.regions:
+                    if region.type == 'WINDOW':
+                        original_region_3d = {'view_perspective': space_data.region_3d.view_perspective}
+                        break
+                
+                try:
+                    # Switch to Camera View
+                    if space_data.region_3d:
+                        space_data.region_3d.view_perspective = 'CAMERA'
+                        
+                    # Set up Eevee shading
+                    space_data.shading.type = 'MATERIAL' # Material Preview/Rendered
+                    if hasattr(space_data.shading, 'use_scene_lights'):
+                        space_data.shading.use_scene_lights = True
+                    if hasattr(space_data.shading, 'use_scene_world'):
+                        space_data.shading.use_scene_world = True
+                    if hasattr(space_data.shading, 'render_pass'):
+                        space_data.shading.render_pass = 'COMBINED'
+                        
+                    # Disable overlays
+                    if hasattr(overlay, 'show_overlays'):
+                        overlay.show_overlays = False
+                    if hasattr(space_data, 'show_gizmo'):
+                        space_data.show_gizmo = False
+                        
+                    # Execute render
+                    override_context = {
+                        'window': viewport_window,
+                        'screen': viewport_screen,
+                        'scene': scene,
+                        'area': viewport_area,
+                        'region': viewport_area.regions[-1],
+                        'space_data': space_data,
+                    }
+                    
+                    with bpy.context.temp_override(**override_context):
+                        result = bpy.ops.render.opengl(write_still=True)
+                        print(f"[GEMINI] OpenGL EEVEE render result: {result}")
+                        
+                finally:
+                    # Restore viewport settings
+                    if original_shading_type:
+                        space_data.shading.type = original_shading_type
+                    if original_use_scene_lights is not None and hasattr(space_data.shading, 'use_scene_lights'):
+                        space_data.shading.use_scene_lights = original_use_scene_lights
+                    if original_use_scene_world is not None and hasattr(space_data.shading, 'use_scene_world'):
+                        space_data.shading.use_scene_world = original_use_scene_world
+                    if original_render_pass is not None and hasattr(space_data.shading, 'render_pass'):
+                        space_data.shading.render_pass = original_render_pass
+                    if original_show_overlays is not None and hasattr(overlay, 'show_overlays'):
+                        overlay.show_overlays = original_show_overlays
+                    if original_show_gizmo is not None and hasattr(space_data, 'show_gizmo'):
+                        space_data.show_gizmo = original_show_gizmo
+                    if original_region_3d and space_data.region_3d:
+                        space_data.region_3d.view_perspective = original_region_3d['view_perspective']
+                
+                print(f"[GEMINI] Regular viewport render completed: {render_path}")
+                
+                # Check for image
                 if not os.path.exists(render_path):
-                    raise DepthRenderError(f"Render file not created: {render_path}")
+                    # Check for numbered versions
+                    import glob
+                    pattern = render_path.replace('.png', '*.png')
+                    matches = glob.glob(pattern)
+                    if matches:
+                        render_path = matches[0]
+                    else:
+                        raise DepthRenderError("Render file not created.")
                 
                 print(f"[GEMINI] Render file size: {os.path.getsize(render_path)} bytes")
                 

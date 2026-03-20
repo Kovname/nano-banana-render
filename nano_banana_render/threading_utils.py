@@ -67,7 +67,7 @@ def update_render_status(scene, status_text: str, is_rendering: bool = None) -> 
                 # Force redraw
                 for window in bpy.context.window_manager.windows:
                     for area in window.screen.areas:
-                        if area.type == 'VIEW_3D':
+                        if area.type in ('VIEW_3D', 'PROPERTIES'):
                             area.tag_redraw()
         except Exception as e:
             print(f"[GEMINI] Error updating status: {e}")
@@ -194,31 +194,60 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                 temp_path = f.name
             
             try:
-                # Load image into Blender
+                # For history: save a PERMANENT copy that won't be deleted
+                permanent_path = None
+                permanent_image_for_history = None
+                
+                if user_prompt:
+                    import datetime
+                    timestamp_str = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+                    permanent_name = f"AI_Result_{timestamp_str}"
+                    
+                    # Save to a stable location (Blender temp dir)
+                    permanent_dir = os.path.join(tempfile.gettempdir(), "nano_banana_history")
+                    os.makedirs(permanent_dir, exist_ok=True)
+                    permanent_path = os.path.join(permanent_dir, f"{permanent_name}.png")
+                    
+                    import shutil
+                    shutil.copy2(temp_path, permanent_path)
+                    print(f"[GEMINI] Saved permanent copy: {permanent_path}")
+                    
+                    # Load the PERMANENT copy into Blender (not the temp file)
+                    if permanent_name in bpy.data.images:
+                        bpy.data.images.remove(bpy.data.images[permanent_name])
+                    
+                    permanent_image_for_history = bpy.data.images.load(permanent_path)
+                    permanent_image_for_history.name = permanent_name
+                    
+                    # Pack into blend file so it survives even if file is deleted
+                    try:
+                        permanent_image_for_history.pack()
+                    except Exception as e:
+                        print(f"[GEMINI] Warning: Could not pack history image: {e}")
+                    
+                    permanent_image_for_history.use_fake_user = True
+                    print(f"[GEMINI] Saved permanent image for history: {permanent_name}")
+                
+                # Load main image from temp file
                 if image_name in bpy.data.images:
                     bpy.data.images.remove(bpy.data.images[image_name])
                 
                 img = bpy.data.images.load(temp_path)
                 img.name = image_name
                 
-                # Keep original image for history
-                permanent_image_for_history = None
-                if user_prompt:
-                    import datetime
-                    permanent_name = f"AI_Result_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    img.name = permanent_name
-                    img.pack()
-                    img.use_fake_user = True  # CRITICAL: Prevent garbage collection!
-                    permanent_image_for_history = img
-                    print(f"[GEMINI] Saved permanent image for history: {permanent_image_for_history.name}")
-                
-                # Create Render Result
+                # Create Render Result copy
                 render_result = bpy.data.images.get('Render Result')
                 if render_result:
                     bpy.data.images.remove(render_result)
                 
                 render_result = img.copy()
                 render_result.name = 'Render Result'
+                
+                # Pack the render result too
+                try:
+                    render_result.pack()
+                except:
+                    pass
                 
                 # Update Image Editors
                 for area in bpy.context.screen.areas:
@@ -271,34 +300,17 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                     pass  # Result still available in Blender images
                 
                 # Add to render history
-                if user_prompt:
+                if user_prompt and permanent_image_for_history:
                     try:
                         scene = bpy.context.scene
-                        print(f"[GEMINI] Scene: {scene.name if scene else 'None'}")
-                        print(f"[GEMINI] Scene has gemini_render: {hasattr(scene, 'gemini_render')}")
                         
                         if hasattr(scene, 'gemini_render'):
                             props = scene.gemini_render
-                            print(f"[GEMINI] Current history length: {len(props.render_history)}")
                             
                             # Create history entry
                             history_item = props.render_history.add()
                             history_item.prompt = user_prompt
-                            
-                            # Use the permanent image created at the beginning
-                            if permanent_image_for_history:
-                                history_item.image_name = permanent_image_for_history.name
-                            else:
-                                # Fallback - create now (shouldn't happen if user_prompt exists)
-                                import datetime
-                                permanent_name = f"AI_Result_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                                try:
-                                    permanent_image = render_result.copy()
-                                    permanent_image.name = permanent_name
-                                    permanent_image.pack()
-                                    history_item.image_name = permanent_name
-                                except Exception:
-                                    history_item.image_name = render_result.name
+                            history_item.image_name = permanent_image_for_history.name
                             
                             # Save style reference info if used
                             if props.use_style_reference and props.style_reference_image:
@@ -319,6 +331,8 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                                 if oldest.image_name in bpy.data.images:
                                     bpy.data.images.remove(bpy.data.images[oldest.image_name])
                                 props.render_history.remove(0)
+                            
+                            print(f"[GEMINI] History saved: {permanent_image_for_history.name}, total: {len(props.render_history)}")
                         
                     except Exception as e:
                         print(f"[GEMINI] Failed to save to history: {e}")
@@ -326,7 +340,7 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                         print(f"[GEMINI] History error traceback: {traceback.format_exc()}")
                 
             finally:
-                # Clean up temporary file
+                # Clean up temporary file (permanent copy was already made)
                 try:
                     os.unlink(temp_path)
                 except:

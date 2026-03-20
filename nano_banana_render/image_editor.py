@@ -8,7 +8,7 @@ import os
 import time
 from typing import Optional
 from bpy.types import Panel, PropertyGroup, Operator
-from bpy.props import StringProperty, BoolProperty, CollectionProperty, IntProperty, PointerProperty
+from bpy.props import StringProperty, BoolProperty, CollectionProperty, IntProperty, PointerProperty, EnumProperty
 
 class EditHistoryItem(PropertyGroup):
     """Single edit in the session history"""
@@ -46,6 +46,18 @@ class ImageEditorProperties(PropertyGroup):
         description="Describe what you want to change in the image",
         default="",
         maxlen=500
+    )
+    
+    # AI Model selection
+    ai_model: EnumProperty(
+        name="Model",
+        description="Select which AI model to use for editing",
+        items=[
+            ('NANO_BANANA_2', "Nano Banana 2", "gemini-3.1-flash-image-preview — Fast, balanced quality"),
+            ('NANO_BANANA_PRO', "Nano Banana Pro", "gemini-3-pro-image-preview — Highest quality, slower"),
+            ('NANO_BANANA', "Nano Banana", "gemini-2.5-flash-image — Basic, fastest (1K only)"),
+        ],
+        default='NANO_BANANA_PRO',
     )
     
     # Session history (kept in memory only - not saved in blend file)
@@ -173,6 +185,68 @@ class BANANA_PT_image_editor_panel(Panel):
         box.label(text=f"🖼️ {image.name}", icon='IMAGE_DATA')
         box.label(text=f"📏 {image.size[0]}x{image.size[1]}", icon='EMPTY_DATA')
         
+        # Model selection
+        box.prop(props, "ai_model", text="Model")
+        
+        # ─── Beta Token Status (Shared with 3D Viewport) ───
+        scene_props = context.scene.gemini_render
+        prefs = context.preferences.addons.get("nano_banana_render")
+        has_token = prefs and hasattr(prefs.preferences, 'beta_token') and prefs.preferences.beta_token.strip()
+        
+        if not has_token:
+            row = layout.row()
+            row.alert = True
+            row.operator("gemini.open_preferences", text="Set Beta Token", icon='ERROR')
+        else:
+            # ─── Cost per render ───
+            model_tier = 'pro' if props.ai_model == 'NANO_BANANA_PRO' else 'flash'
+            cost_grid = {
+                'flash': {'1024': 10, '2048': 15, '4096': 60, 'AUTO': 10},
+                'pro':   {'1024': 30, '2048': 45, '4096': 60, 'AUTO': 30},
+            }
+            res = getattr(props, 'resolution', '1024')
+            cost = cost_grid.get(model_tier, cost_grid['pro']).get(res, 30)
+            row = box.row()
+            row.scale_y = 0.8
+            row.label(text=f"Cost: {cost} credits per render")
+            
+            row = box.row(align=True)
+            if scene_props.beta_balance >= 0:
+                row.label(text=f"Credits: {scene_props.beta_balance}")
+            else:
+                row.label(text="Credits: ...")
+            row.operator("banana.refresh_balance", text="", icon='FILE_REFRESH')
+            op = row.operator("wm.url_open", text="Buy Credits", icon='PLUS')
+            op.url = "https://nanode.tech/pricing/"
+            
+            # ─── Rating buttons (after render) ────────────────
+            if scene_props.last_generation_id > 0 and not scene_props.last_generation_rated:
+                rate_box = box.box()
+                rate_box.label(text="Rate this result:", icon='QUESTION')
+                row = rate_box.row(align=True)
+                op_like = row.operator("banana.rate_generation", text="👍 Good")
+                op_like.rating = "like"
+                op_dislike = row.operator("banana.rate_generation", text="👎 Bad")
+                op_dislike.rating = "dislike"
+            
+            # ─── Feedback section ─────────────────────────────
+            if scene_props.show_feedback:
+                fb_box = box.box()
+                if scene_props.has_submitted_feedback:
+                    fb_box.label(text="Leave additional feedback (no bonus):", icon='INFO')
+                else:
+                    fb_box.label(text="Leave feedback (min. 50 chars) for +50 generations!", icon='INFO')
+                fb_box.prop(scene_props, "feedback_text", text="")
+                row = fb_box.row()
+                row.enabled = len(scene_props.feedback_text.strip()) >= 50
+                row.operator("banana.send_feedback", text="Submit Feedback", icon='CHECKMARK')
+            else:
+                row = box.row()
+                if scene_props.has_submitted_feedback:
+                    row.operator("banana.toggle_feedback", text="Thanks for your Feedback!", icon='CHECKMARK')
+                else:
+                    row.operator("banana.toggle_feedback", text="Leave Feedback (+50 Credits)", icon='OUTLINER_OB_LIGHT')
+        
         # Convert Render Result button
         if image.type == 'RENDER_RESULT':
             box.separator()
@@ -184,6 +258,12 @@ class BANANA_PT_image_editor_panel(Panel):
         # Resolution selection
         box.label(text="Output Resolution:", icon='FULLSCREEN_ENTER')
         box.prop(props, "resolution", text="")
+        
+        # Warn if 2K/4K selected with Nano Banana
+        if props.ai_model == 'NANO_BANANA' and props.resolution in ('2048', '4096'):
+            row = box.row()
+            row.alert = True
+            row.label(text="Nano Banana supports 1K only", icon='ERROR')
         
         # Edit prompt
         layout.separator()
@@ -349,11 +429,11 @@ class NANO_BANANA_OT_apply_edit(Operator):
             self.report({'ERROR'}, "Enter edit instructions or select reference image")
             return {'CANCELLED'}
         
-        # Validate API key
-        from . import gemini_api
-        api_key = gemini_api.get_api_key()
-        if not api_key:
-            self.report({'ERROR'}, "API key not set. Enter it in addon preferences.")
+        # Validate beta token
+        prefs = context.preferences.addons.get("nano_banana_render")
+        has_token = prefs and hasattr(prefs.preferences, 'beta_token') and prefs.preferences.beta_token.strip()
+        if not has_token:
+            self.report({'ERROR'}, "Beta token not set. Enter it in addon preferences.")
             return {'CANCELLED'}
         
         # Start edit in background thread
@@ -370,57 +450,135 @@ class NANO_BANANA_OT_apply_edit(Operator):
             temp_dir = tempfile.mkdtemp(prefix="nano_banana_edit_")
             image_path = os.path.join(temp_dir, "original.png")
             
-            # Use image.save() - saves raw image data WITHOUT view transform
-            # This is the CORRECT way to save images in Blender
-            print(f"[NANO BANANA] Saving image with image.save() (no view transform)...")
-            
-            # Store original settings
-            original_filepath = image.filepath_raw
-            original_file_format = image.file_format
+            # ─── CRITICAL: Export image with correct sRGB color ───
+            # Blender stores pixel data internally as SCENE-LINEAR floats.
+            # image.save() writes them with the image's colorspace inverse transform,
+            # but this can fail or produce incorrect results for packed/AI-generated images.
+            # save_render() applies the View Transform (Filmic/AgX) which destroys colors.
+            #
+            # SOLUTION: Read raw linear pixel data → apply sRGB gamma manually → save via PIL.
+            # This produces a perfectly correct sRGB PNG every time, regardless of
+            # Blender's color management settings or the image's internal state.
+            print(f"[NANO BANANA] Exporting image via PIL (sRGB-safe, no view transform)...")
+            print(f"[NANO BANANA] Image colorspace: {image.colorspace_settings.name}")
+            print(f"[NANO BANANA] Image size: {image.size[0]}x{image.size[1]}")
             
             try:
-                # Set target path and format
-                image.filepath_raw = image_path
-                image.file_format = 'PNG'
+                from PIL import Image as PILImage
+                import numpy as np
                 
-                # CRITICAL: Use save() NOT save_render()
-                # save() = raw image data (correct)
-                # save_render() = applies view transform (wrong - darkens image)
+                w, h = image.size
+                
+                # Read raw pixel data from Blender (always linear floats, RGBA)
+                pixels = np.array(image.pixels[:]).reshape((h, w, image.channels))
+                
+                # Flip vertically (Blender stores bottom-up, PIL expects top-down)
+                pixels = np.flip(pixels, axis=0)
+                
+                # Determine if this image is stored as linear or sRGB internally
+                cs_name = image.colorspace_settings.name.lower()
+                is_linear = ('linear' in cs_name or 'scene' in cs_name or 'raw' in cs_name)
+                
+                if is_linear:
+                    # Image IS linear → apply sRGB gamma curve for PNG output
+                    print(f"[NANO BANANA] Image is linear, applying sRGB gamma...")
+                    rgb = pixels[:, :, :3]
+                    # sRGB gamma: linear → sRGB
+                    rgb = np.clip(rgb, 0.0, 1.0)
+                    srgb = np.where(rgb <= 0.0031308,
+                                    rgb * 12.92,
+                                    1.055 * np.power(rgb, 1.0 / 2.4) - 0.055)
+                    pixels[:, :, :3] = srgb
+                else:
+                    # Image is already sRGB-tagged → pixels are already in sRGB space
+                    # Just clamp to valid output range
+                    print(f"[NANO BANANA] Image is sRGB, direct export...")
+                    pixels = np.clip(pixels, 0.0, 1.0)
+                
+                # Convert float [0,1] → uint8 [0,255]
+                pixels_u8 = (pixels * 255.0 + 0.5).astype(np.uint8)
+                
+                # Create PIL image
+                if image.channels == 4:
+                    pil_img = PILImage.fromarray(pixels_u8, 'RGBA')
+                else:
+                    pil_img = PILImage.fromarray(pixels_u8[:, :, :3], 'RGB')
+                
+                pil_img.save(image_path, 'PNG')
+                print(f"[NANO BANANA] PIL export successful: {image_path}")
+                
+            except ImportError:
+                # PIL not available — fallback to Blender's save()
+                print(f"[NANO BANANA] PIL not available, falling back to image.save()...")
+                original_filepath = image.filepath_raw
+                original_file_format = image.file_format
                 try:
+                    image.filepath_raw = image_path
+                    image.file_format = 'PNG'
                     image.save()
-                except Exception as e:
-                    print(f"[NANO BANANA] image.save() failed: {e}, trying save_render()...")
-                    image.save_render(image_path)
-                
-                print(f"[NANO BANANA] Saved: {image_path}")
-                
-                # Verify file was created
-                if not os.path.exists(image_path):
-                    # Last resort: try save_render
-                    image.save_render(image_path)
-                    
-            finally:
-                # Restore original settings
-                image.filepath_raw = original_filepath
-                image.file_format = original_file_format
+                finally:
+                    image.filepath_raw = original_filepath
+                    image.file_format = original_file_format
+            except Exception as e:
+                print(f"[NANO BANANA] PIL export failed: {e}, falling back to image.save()...")
+                original_filepath = image.filepath_raw
+                original_file_format = image.file_format
+                try:
+                    image.filepath_raw = image_path
+                    image.file_format = 'PNG'
+                    image.save()
+                finally:
+                    image.filepath_raw = original_filepath
+                    image.file_format = original_file_format
             
             # Get reference image path if provided
             reference_path = None
             if props.use_reference_image and props.reference_image:
                 reference_path = os.path.join(temp_dir, "reference.png")
                 
-                # Save reference using image.save()
+                # Save reference using PIL (same sRGB-safe method as main image)
                 ref_image = props.reference_image
-                ref_original_filepath = ref_image.filepath_raw
-                ref_original_format = ref_image.file_format
                 
                 try:
-                    ref_image.filepath_raw = reference_path
-                    ref_image.file_format = 'PNG'
-                    ref_image.save()
-                finally:
-                    ref_image.filepath_raw = ref_original_filepath
-                    ref_image.file_format = ref_original_format
+                    from PIL import Image as PILImage
+                    import numpy as np
+                    
+                    rw, rh = ref_image.size
+                    ref_pixels = np.array(ref_image.pixels[:]).reshape((rh, rw, ref_image.channels))
+                    ref_pixels = np.flip(ref_pixels, axis=0)
+                    
+                    cs_name = ref_image.colorspace_settings.name.lower()
+                    is_linear = ('linear' in cs_name or 'scene' in cs_name or 'raw' in cs_name)
+                    
+                    if is_linear:
+                        rgb = ref_pixels[:, :, :3]
+                        rgb = np.clip(rgb, 0.0, 1.0)
+                        srgb = np.where(rgb <= 0.0031308,
+                                        rgb * 12.92,
+                                        1.055 * np.power(rgb, 1.0 / 2.4) - 0.055)
+                        ref_pixels[:, :, :3] = srgb
+                    else:
+                        ref_pixels = np.clip(ref_pixels, 0.0, 1.0)
+                    
+                    ref_u8 = (ref_pixels * 255.0 + 0.5).astype(np.uint8)
+                    if ref_image.channels == 4:
+                        pil_ref = PILImage.fromarray(ref_u8, 'RGBA')
+                    else:
+                        pil_ref = PILImage.fromarray(ref_u8[:, :, :3], 'RGB')
+                    pil_ref.save(reference_path, 'PNG')
+                    print(f"[NANO BANANA] Reference exported via PIL: {reference_path}")
+                    
+                except Exception:
+                    # Fallback to Blender save()
+                    ref_original_filepath = ref_image.filepath_raw
+                    ref_original_format = ref_image.file_format
+                    try:
+                        ref_image.filepath_raw = reference_path
+                        ref_image.file_format = 'PNG'
+                        ref_image.save()
+                    finally:
+                        ref_image.filepath_raw = ref_original_filepath
+                        ref_image.file_format = ref_original_format
             
             # Get inpainting guide if enabled
             inpaint_guide_path = None
@@ -433,22 +591,31 @@ class NANO_BANANA_OT_apply_edit(Operator):
                     return {'CANCELLED'}
                 print(f"[NANO BANANA] Extracted inpaint guide: {inpaint_guide_path}")
             
+            # Map model enum to API model name
+            MODEL_MAP = {
+                'NANO_BANANA_2': 'gemini-3.1-flash-image-preview',
+                'NANO_BANANA_PRO': 'gemini-3-pro-image-preview',
+                'NANO_BANANA': 'gemini-2.5-flash-image',
+            }
+            model_name = MODEL_MAP.get(props.ai_model, 'gemini-3.1-flash-image-preview')
+            
             # Start background thread
             thread = image_edit_thread.ImageEditThread(
                 image_path=image_path,
                 edit_prompt=props.edit_prompt,
                 mask_path=inpaint_guide_path,
                 reference_path=reference_path,
-                api_key=api_key,
+                api_key="",  # TODO: migrate image_edit_thread to beta_api
                 context=context,
                 original_image_name=image.name,
                 temp_dir=temp_dir,
-                resolution=props.resolution, # Pass selected resolution
-                original_size=(image.size[0], image.size[1]) # Pass original size for auto-detect
+                resolution=props.resolution,
+                original_size=(image.size[0], image.size[1]),
+                model_name=model_name,
             )
             
             thread.start()
-            print("[NANO BANANA] Edit thread started in background")
+            print(f"[NANO BANANA] Edit thread started with model: {model_name}")
             
             self.report({'INFO'}, "AI edit started in background...")
             
@@ -773,19 +940,52 @@ class NANO_BANANA_OT_switch_to_paint(Operator):
             
             # Setup brush
             ts = context.tool_settings
-            if ts.image_paint:
-                if not ts.image_paint.brush:
-                    if 'Draw' in bpy.data.brushes:
-                        ts.image_paint.brush = bpy.data.brushes['Draw']
+            paint = ts.image_paint
+            
+            if paint:
+                # Blender 5.0: unified_paint_settings is on Paint struct
+                # Blender 4.x: unified_paint_settings is on tool_settings
+                ups = getattr(paint, 'unified_paint_settings', None)
+                if ups is None:
+                    ups = getattr(ts, 'unified_paint_settings', None)
                 
-                if ts.image_paint.brush:
-                    ts.image_paint.brush.size = props.brush_size
-                    ts.image_paint.brush.color = props.brush_color
-                    ts.image_paint.brush.strength = 1.0
-                    
-                    if hasattr(ts, 'unified_paint_settings'):
-                        ts.unified_paint_settings.size = props.brush_size
-                        ts.unified_paint_settings.color = props.brush_color
+                if ups:
+                    try:
+                        ups.use_unified_size = False
+                        ups.use_unified_color = False
+                    except Exception:
+                        pass
+                
+                # Try to ensure we have a brush
+                if not paint.brush:
+                    # Blender 5.0: paint.brush is readonly, use asset_activate
+                    try:
+                        bpy.ops.brush.asset_activate(
+                            asset_library_type='ESSENTIALS',
+                            relative_asset_identifier="brushes\\essentials_brushes-texture_paint.blend\\Brush\\Draw"
+                        )
+                        print("[NANO BANANA] Activated Draw brush via asset_activate")
+                    except Exception as e1:
+                        print(f"[NANO BANANA] asset_activate failed: {e1}")
+                        # Blender 4.x fallback: direct assignment
+                        try:
+                            if 'Draw' in bpy.data.brushes:
+                                paint.brush = bpy.data.brushes['Draw']
+                                print("[NANO BANANA] Set Draw brush via direct assignment")
+                        except Exception as e2:
+                            print(f"[NANO BANANA] Direct brush assignment also failed: {e2}")
+                
+                brush = paint.brush
+                if brush:
+                    try:
+                        brush.size = props.brush_size
+                        brush.color = (props.brush_color[0], props.brush_color[1], props.brush_color[2])
+                        brush.strength = 1.0
+                        print(f"[NANO BANANA] Brush configured: size={brush.size}, color={brush.color[:]}")
+                    except Exception as e:
+                        print(f"[NANO BANANA] Could not set brush properties: {e}")
+                else:
+                    print("[NANO BANANA] Warning: No brush available after setup")
             
             self.report({'INFO'}, "Draw mode")
             return {'FINISHED'}
@@ -875,7 +1075,9 @@ class NANO_BANANA_OT_apply_inpaint(Operator):
 
 
 def on_mask_toggle(self, context):
-    """Handle mask toggle - switch to Paint mode automatically"""
+    """Handle mask toggle - switch to Paint mode automatically
+    Compatible with Blender 4.x and 5.0+
+    """
     try:
         # Find Image Editor area
         for area in context.screen.areas:
@@ -897,31 +1099,47 @@ def on_mask_toggle(self, context):
                                     paint = ts.image_paint
                                     
                                     if paint:
+                                        # Disable unified paint settings
+                                        # Blender 5.0: on Paint struct; 4.x: on tool_settings
+                                        ups = getattr(paint, 'unified_paint_settings', None)
+                                        if ups is None:
+                                            ups = getattr(ts, 'unified_paint_settings', None)
+                                        
+                                        if ups:
+                                            try:
+                                                ups.use_unified_size = False
+                                                ups.use_unified_color = False
+                                            except Exception:
+                                                pass
+                                        
                                         brush = paint.brush
                                         if not brush:
-                                            # Create default brush
-                                            if 'Draw' in bpy.data.brushes:
-                                                brush = bpy.data.brushes['Draw']
-                                                paint.brush = brush
-                                            else:
-                                                print("[NANO BANANA] No default brush found")
+                                            # Blender 5.0: use asset_activate
+                                            try:
+                                                bpy.ops.brush.asset_activate(
+                                                    asset_library_type='ESSENTIALS',
+                                                    relative_asset_identifier="brushes\\essentials_brushes-texture_paint.blend\\Brush\\Draw"
+                                                )
+                                                brush = paint.brush
+                                                print("[NANO BANANA] Activated Draw brush via asset_activate")
+                                            except Exception:
+                                                # Blender 4.x fallback
+                                                try:
+                                                    if 'Draw' in bpy.data.brushes:
+                                                        paint.brush = bpy.data.brushes['Draw']
+                                                        brush = paint.brush
+                                                except Exception:
+                                                    print("[NANO BANANA] No default brush found")
                                         
                                         if brush:
-                                            # Set brush properties in Tool Settings
-                                            brush.size = self.brush_size
-                                            brush.color = self.brush_color
-                                            brush.strength = 1.0
-                                            brush.blend = 'MIX'
-                                            
-                                            # Also update unified settings
-                                            if hasattr(ts, 'unified_paint_settings'):
-                                                ups = ts.unified_paint_settings
-                                                ups.size = self.brush_size
-                                                ups.color = self.brush_color
-                                                ups.use_unified_size = True
-                                                ups.use_unified_color = True
-                                            
-                                            print(f"[NANO BANANA] Brush configured in Tool Settings: size={brush.size}, color={brush.color[:]}")
+                                            try:
+                                                brush.size = self.brush_size
+                                                brush.color = (self.brush_color[0], self.brush_color[1], self.brush_color[2])
+                                                brush.strength = 1.0
+                                                brush.blend = 'MIX'
+                                                print(f"[NANO BANANA] Brush configured: size={brush.size}, color={brush.color[:]}")
+                                            except Exception as e:
+                                                print(f"[NANO BANANA] Could not set brush properties: {e}")
                                 except Exception as e:
                                     import traceback
                                     print(f"[NANO BANANA] Brush setup error: {e}")
@@ -999,26 +1217,41 @@ class NANO_BANANA_OT_unlink_reference_image(Operator):
 
 
 def update_brush_settings(self, context):
-    """Update brush settings when UI changes - apply to Tool Settings"""
+    """Update brush settings when UI changes - apply to Tool Settings
+    Compatible with Blender 4.x and 5.0+
+    """
     try:
-        # Update in Tool Settings (left side panel in Paint mode)
         ts = context.tool_settings
+        paint = getattr(ts, 'image_paint', None)
         
-        if hasattr(ts, 'image_paint') and ts.image_paint:
-            paint = ts.image_paint
+        if paint:
+            # Blender 5.0: unified_paint_settings is on Paint struct (ts.image_paint)
+            # Blender 4.x: unified_paint_settings is on tool_settings
+            ups = getattr(paint, 'unified_paint_settings', None)
+            if ups is None:
+                ups = getattr(ts, 'unified_paint_settings', None)
             
-            # Update brush
-            if paint.brush:
-                paint.brush.size = self.brush_size
-                paint.brush.color = self.brush_color
-                
-                # Also set unified settings
-                if hasattr(ts, 'unified_paint_settings'):
-                    ups = ts.unified_paint_settings
-                    ups.size = self.brush_size
-                    ups.color = self.brush_color
-                
-                print(f"[NANO BANANA] Brush updated in Tool Settings: size={self.brush_size}, color={self.brush_color[:]}")
+            if ups:
+                try:
+                    ups.use_unified_size = False
+                    ups.use_unified_color = False
+                except Exception:
+                    pass
+            
+            brush = paint.brush
+            if brush:
+                try:
+                    brush.size = self.brush_size
+                    brush.color = (self.brush_color[0], self.brush_color[1], self.brush_color[2])
+                    print(f"[NANO BANANA] Brush updated: size={self.brush_size}, color=({self.brush_color[0]:.2f}, {self.brush_color[1]:.2f}, {self.brush_color[2]:.2f})")
+                except Exception as e:
+                    print(f"[NANO BANANA] Could not set brush properties: {e}")
+        
+        # Force UI redraw
+        if hasattr(context, 'screen') and context.screen:
+            for area in context.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    area.tag_redraw()
         
     except Exception as e:
         import traceback

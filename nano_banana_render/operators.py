@@ -39,31 +39,24 @@ class GEMINI_OT_ai_render(Operator):
                 self.current_thread.stop()
                 self.current_thread.join(timeout=2.0)
             
-            # Get API key (from environment variable or addon preferences only - not scene for security)
-            api_key = gemini_api.get_api_key()
-            if not api_key:
-                error_msg = "No API key found. Set GEMINI_API_KEY environment variable or configure in Addon Preferences."
+            # Validate beta token
+            prefs = context.preferences.addons.get("nano_banana_render")
+            has_token = prefs and hasattr(prefs.preferences, 'beta_token') and prefs.preferences.beta_token.strip()
+            if not has_token:
+                error_msg = "No beta token. Go to Edit → Preferences → Add-ons → Nano Banana"
                 self.report({'ERROR'}, error_msg)
-                props.status_text = "No API key"
+                props.status_text = "No beta token"
                 return {'CANCELLED'}
             
-            # Initialize components
-            depth_renderer = depth_utils.DepthRenderer()
-            api_client = gemini_api.GeminiAPI(api_key)
-            
-            # Update UI state and start thread
+            # Update UI state and trigger render via the render engine
             props.is_rendering = True
             props.status_text = "Starting AI render..."
             
-            self.current_thread = threading_utils.FullRenderThread(
-                context=context,
-                depth_renderer=depth_renderer,
-                api_client=api_client,
-                user_prompt=props.prompt
-            )
+            # The actual rendering happens in NanoBananaRenderEngine.render()
+            # which uses beta_api to communicate with the server
+            bpy.ops.render.render('INVOKE_DEFAULT')
             
-            self.current_thread.start()
-            self.report({'INFO'}, "AI render started in background")
+            self.report({'INFO'}, "AI render started")
             return {'FINISHED'}
             
         except Exception as e:
@@ -148,31 +141,37 @@ class GEMINI_OT_open_api_key_url(Operator):
         return {'FINISHED'}
 
 class GEMINI_OT_validate_api_key(Operator):
-    """Validate API key"""
+    """Validate beta token"""
     bl_idname = "gemini.validate_api_key"
-    bl_label = "Test API Key"
-    bl_description = "Test if the API key is valid"
+    bl_label = "Test Beta Token"
+    bl_description = "Test if the beta token is configured"
     bl_options = {'REGISTER'}
     
     def execute(self, context):
-        """Validate API key"""
+        """Validate beta token"""
         try:
-            api_key = gemini_api.get_api_key()
-            
-            if not api_key:
-                self.report({'ERROR'}, "No API key configured. Set GEMINI_API_KEY or configure in Addon Preferences.")
+            prefs = context.preferences.addons.get("nano_banana_render")
+            if not prefs or not hasattr(prefs.preferences, 'beta_token'):
+                self.report({'ERROR'}, "Addon preferences not found")
                 return {'CANCELLED'}
             
-            # Check format
-            if api_key.startswith('AIza') and len(api_key) > 35:
-                self.report({'INFO'}, "API key format looks valid")
+            token = prefs.preferences.beta_token.strip()
+            if not token:
+                self.report({'ERROR'}, "No beta token set. Enter it in addon preferences.")
+                return {'CANCELLED'}
+            
+            # Try to get balance from server as a connectivity test
+            from . import beta_api
+            balance = beta_api.get_balance()
+            if balance >= 0:
+                self.report({'INFO'}, f"Token valid! Balance: {balance} generations")
             else:
-                self.report({'WARNING'}, "API key format seems invalid (should start with 'AIza')")
+                self.report({'WARNING'}, "Token set but server returned invalid response")
             
             return {'FINISHED'}
             
         except Exception as e:
-            self.report({'ERROR'}, f"Failed to validate API key: {str(e)}")
+            self.report({'ERROR'}, f"Connection error: {str(e)}")
             return {'CANCELLED'}
 
 
@@ -281,7 +280,44 @@ class GEMINI_OT_load_history(Operator):
                         image = candidate
                         print(f"[GEMINI] Found image: {image.name}")
                     else:
-                        print(f"[GEMINI] Image found but has no data: {history_item.image_name}")
+                        # Image exists but has no data — try to reload it
+                        print(f"[GEMINI] Image has no data, attempting reload: {history_item.image_name}")
+                        
+                        # Method 1: If packed, unpack and repack to force data reload
+                        if candidate.packed_file:
+                            try:
+                                import tempfile
+                                import os
+                                reload_dir = os.path.join(tempfile.gettempdir(), "nano_banana_reload")
+                                os.makedirs(reload_dir, exist_ok=True)
+                                reload_path = os.path.join(reload_dir, f"{history_item.image_name}.png")
+                                candidate.unpack(method='WRITE_LOCAL')
+                                candidate.filepath = reload_path
+                                candidate.reload()
+                                if candidate.has_data:
+                                    candidate.pack()
+                                    image = candidate
+                                    print(f"[GEMINI] Reloaded from packed data: {image.name}")
+                            except Exception as e:
+                                print(f"[GEMINI] Packed reload failed: {e}")
+                        
+                        # Method 2: Try loading from permanent history folder
+                        if not image:
+                            import tempfile
+                            import os
+                            perm_path = os.path.join(tempfile.gettempdir(), "nano_banana_history", f"{history_item.image_name}.png")
+                            if os.path.exists(perm_path):
+                                try:
+                                    bpy.data.images.remove(candidate)
+                                    image = bpy.data.images.load(perm_path)
+                                    image.name = history_item.image_name
+                                    image.pack()
+                                    image.use_fake_user = True
+                                    print(f"[GEMINI] Reloaded from permanent file: {perm_path}")
+                                except Exception as e:
+                                    print(f"[GEMINI] Permanent file reload failed: {e}")
+                            else:
+                                print(f"[GEMINI] No permanent file at: {perm_path}")
                 except Exception as e:
                     print(f"[GEMINI] Error accessing image: {e}")
             else:
@@ -813,3 +849,543 @@ class GEMINI_OT_load_example_reference(Operator):
             context.window_manager.popup_menu(draw_message, title="Style Reference Examples", icon='IMAGE_DATA')
             self.report({'INFO'}, "Check popup for reference image ideas")
             return {'FINISHED'}
+
+
+# ─── Beta Operators ───────────────────────────────────────────
+
+class BANANA_OT_send_feedback(Operator):
+    """Submit feedback and earn bonus generations"""
+    bl_idname = "banana.send_feedback"
+    bl_label = "Submit Feedback"
+    bl_description = "Send your feedback to the developers and earn +50 bonus generations"
+
+    def execute(self, context):
+        from . import beta_api
+
+        props = context.scene.gemini_render
+        text = props.feedback_text.strip()
+
+        if len(text) < 5:
+            self.report({'WARNING'}, "Feedback too short (min 5 characters)")
+            return {'CANCELLED'}
+
+        try:
+            new_balance = beta_api.send_feedback(text)
+            props.beta_balance = new_balance
+            props.feedback_text = ""
+            props.show_feedback = False
+            props.has_submitted_feedback = True
+            self.report({'INFO'}, f"Thanks! +50 generations awarded. Balance: {new_balance}")
+        except beta_api.BetaAPIError as e:
+            self.report({'ERROR'}, f"Failed to submit feedback: {e.message}")
+        except Exception as e:
+            self.report({'ERROR'}, f"Network error: {str(e)}")
+
+        return {'FINISHED'}
+
+
+class BANANA_OT_rate_generation(Operator):
+    """Rate the last AI generation"""
+    bl_idname = "banana.rate_generation"
+    bl_label = "Rate Generation"
+    bl_description = "Rate this generation result"
+
+    rating: StringProperty(
+        name="Rating",
+        default="like"
+    )
+
+    def execute(self, context):
+        from . import beta_api
+
+        props = context.scene.gemini_render
+        gen_id = props.last_generation_id
+
+        if gen_id <= 0:
+            return {'CANCELLED'}
+
+        # Send rating silently in background
+        import threading
+
+        def _rate():
+            beta_api.send_rating(gen_id, self.rating)
+
+        threading.Thread(target=_rate, daemon=True).start()
+
+        # Update UI immediately
+        props.last_generation_rated = True
+        emoji = "👍" if self.rating == "like" else "👎"
+        self.report({'INFO'}, f"{emoji} Thanks for the feedback!")
+
+        return {'FINISHED'}
+
+
+class BANANA_OT_refresh_balance(Operator):
+    """Refresh generations balance from server"""
+    bl_idname = "banana.refresh_balance"
+    bl_label = "Refresh Balance"
+    bl_description = "Check remaining generations from the server"
+
+    def execute(self, context):
+        from . import beta_api
+
+        try:
+            balance = beta_api.get_balance()
+            if balance >= 0:
+                context.scene.gemini_render.beta_balance = balance
+                self.report({'INFO'}, f"Balance: {balance} generations left")
+            else:
+                self.report({'WARNING'}, "Could not fetch balance — check your token")
+        except Exception as e:
+            self.report({'ERROR'}, f"Error: {str(e)}")
+
+        return {'FINISHED'}
+
+
+class BANANA_OT_toggle_feedback(Operator):
+    """Toggle the feedback input panel"""
+    bl_idname = "banana.toggle_feedback"
+    bl_label = "Toggle Feedback"
+    bl_description = "Show or hide the feedback form"
+
+    def execute(self, context):
+        props = context.scene.gemini_render
+        props.show_feedback = not props.show_feedback
+        return {'FINISHED'}
+
+
+class BANANA_OT_google_login(Operator):
+    """Login with Google — opens browser, receives API key automatically"""
+    bl_idname = "banana.google_login"
+    bl_label = "Login with Google"
+    bl_description = "Log in with your Google account. API key is saved automatically — no copy-paste needed!"
+
+    _server = None
+    _thread = None
+
+    def execute(self, context):
+        import webbrowser
+        import threading
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        from urllib.parse import urlparse, parse_qs
+        import socket
+        from . import beta_api
+
+        operator_self = self
+
+        # ─── Find a free port ─────────────────────────────────
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('localhost', 0))
+        port = sock.getsockname()[1]
+        sock.close()
+
+        # ─── Callback handler ─────────────────────────────────
+        class CallbackHandler(BaseHTTPRequestHandler):
+            received_data = {}
+
+            def do_GET(self_handler):
+                parsed = urlparse(self_handler.path)
+                if parsed.path == "/nanode_auth_callback":
+                    params = parse_qs(parsed.query)
+                    api_key = params.get("api_key", [""])[0]
+                    email = params.get("email", [""])[0]
+                    name = params.get("name", [""])[0]
+                    balance = params.get("balance", ["0"])[0]
+
+                    CallbackHandler.received_data = {
+                        "api_key": api_key,
+                        "email": email,
+                        "name": name,
+                        "balance": int(balance) if balance.isdigit() else 0,
+                    }
+
+                    # Show success page in browser
+                    html = _login_success_html(name, email, balance)
+                    self_handler.send_response(200)
+                    self_handler.send_header("Content-Type", "text/html; charset=utf-8")
+                    self_handler.end_headers()
+                    self_handler.wfile.write(html.encode("utf-8"))
+
+                    # Schedule saving to Blender prefs from main thread
+                    from .threading_utils import execute_in_main_thread
+
+                    def _save_credentials():
+                        try:
+                            prefs = bpy.context.preferences.addons.get("nano_banana_render")
+                            if prefs and hasattr(prefs.preferences, "beta_token"):
+                                prefs.preferences.beta_token = api_key
+                                print(f"[NANODE] ✅ API key saved automatically for {email}")
+
+                            # Save to persistent file
+                            _save_credentials_file(api_key, email, name)
+
+                            # Update balance in scene props
+                            try:
+                                for scene in bpy.data.scenes:
+                                    if hasattr(scene, "gemini_render"):
+                                        scene.gemini_render.beta_balance = int(balance) if balance.isdigit() else 0
+                            except:
+                                pass
+
+                            # Redraw all UI
+                            for window in bpy.context.window_manager.windows:
+                                for area in window.screen.areas:
+                                    area.tag_redraw()
+
+                        except Exception as ex:
+                            print(f"[NANODE] Error saving credentials: {ex}")
+
+                    execute_in_main_thread(_save_credentials)
+
+                    # Shut down server after a short delay
+                    import threading as _th
+                    _th.Timer(1.0, self_handler.server.shutdown).start()
+
+                else:
+                    self_handler.send_response(404)
+                    self_handler.end_headers()
+
+            def log_message(self_handler, format, *args):
+                pass  # Silence HTTP logs
+
+        # ─── Start local server in background ────────────────
+        server = HTTPServer(('localhost', port), CallbackHandler)
+        BANANA_OT_google_login._server = server
+
+        def _run_server():
+            try:
+                server.handle_request()  # Handle single request then stop
+            except:
+                pass
+
+        thread = threading.Thread(target=_run_server, daemon=True)
+        thread.start()
+        BANANA_OT_google_login._thread = thread
+
+        # ─── Open browser via api.nanode.tech ──────────────────
+        login_url = f"https://api.nanode.tech/auth/google/login?callback_port={port}"
+        webbrowser.open(login_url)
+
+        self.report({'INFO'}, "Browser opened — log in with Google and you'll be connected automatically!")
+        return {'FINISHED'}
+
+
+class BANANA_OT_logout(Operator):
+    """Log out of Nanode account"""
+    bl_idname = "banana.logout"
+    bl_label = "Log Out"
+    bl_description = "Clear saved credentials and log out"
+
+    def execute(self, context):
+        prefs = context.preferences.addons.get("nano_banana_render")
+        if prefs and hasattr(prefs.preferences, "beta_token"):
+            prefs.preferences.beta_token = ""
+
+        # Clear persistent file
+        _delete_credentials_file()
+
+        # Reset balance
+        try:
+            context.scene.gemini_render.beta_balance = -1
+        except:
+            pass
+
+        self.report({'INFO'}, "Logged out successfully")
+        return {'FINISHED'}
+
+
+# ─── Credential Persistence ──────────────────────────────────
+
+def _get_credentials_path() -> str:
+    """Get path to persistent credentials file."""
+    import tempfile
+    cred_dir = os.path.join(tempfile.gettempdir(), "nanode_blender")
+    os.makedirs(cred_dir, exist_ok=True)
+    return os.path.join(cred_dir, "credentials.json")
+
+
+def _save_credentials_file(api_key: str, email: str, name: str):
+    """Save credentials to a persistent file."""
+    import json
+    try:
+        data = {"api_key": api_key, "email": email, "name": name}
+        with open(_get_credentials_path(), "w") as f:
+            json.dump(data, f)
+        print(f"[NANODE] Credentials saved to {_get_credentials_path()}")
+    except Exception as e:
+        print(f"[NANODE] Failed to save credentials: {e}")
+
+
+def _load_credentials_file() -> dict:
+    """Load credentials from persistent file. Returns {} if not found."""
+    import json
+    try:
+        path = _get_credentials_path()
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[NANODE] Failed to load credentials: {e}")
+    return {}
+
+
+def _delete_credentials_file():
+    """Delete the persistent credentials file."""
+    try:
+        path = _get_credentials_path()
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"[NANODE] Credentials file deleted")
+    except Exception as e:
+        print(f"[NANODE] Failed to delete credentials: {e}")
+
+
+def _get_user_email() -> str:
+    """Get the stored user email from credentials file."""
+    data = _load_credentials_file()
+    return data.get("email", "")
+
+
+def _get_user_name() -> str:
+    """Get the stored user name from credentials file."""
+    data = _load_credentials_file()
+    return data.get("name", "")
+
+
+def restore_credentials_on_startup():
+    """Called on addon startup to restore credentials from file."""
+    data = _load_credentials_file()
+    if data.get("api_key"):
+        try:
+            prefs = bpy.context.preferences.addons.get("nano_banana_render")
+            if prefs and hasattr(prefs.preferences, "beta_token"):
+                current = prefs.preferences.beta_token.strip()
+                if not current:
+                    prefs.preferences.beta_token = data["api_key"]
+                    print(f"[NANODE] ✅ Credentials restored for {data.get('email', '?')}")
+        except Exception as e:
+            print(f"[NANODE] Could not restore credentials: {e}")
+
+
+def _login_success_html(name: str, email: str, balance: str) -> str:
+    """HTML page shown in browser after successful auto-login."""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nanode — Connected!</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background: #000;
+            color: #e5e5e5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            overflow: hidden;
+        }}
+        body::before {{
+            content: '';
+            position: fixed;
+            top: 50%; left: 50%;
+            width: 600px; height: 600px;
+            transform: translate(-50%, -50%);
+            background: radial-gradient(circle, rgba(255,200,50,0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }}
+        .logo {{
+            display: flex; align-items: center; gap: 10px;
+            margin-bottom: 40px;
+            animation: fadeDown 0.5s ease-out;
+        }}
+        .logo svg {{ width: 32px; height: 32px; }}
+        .logo span {{
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.02em;
+        }}
+        @keyframes fadeDown {{
+            from {{ opacity: 0; transform: translateY(-12px); }}
+            to   {{ opacity: 1; transform: translateY(0); }}
+        }}
+        .card {{
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px;
+            padding: 48px 40px;
+            max-width: 420px;
+            width: 100%;
+            text-align: center;
+            backdrop-filter: blur(20px);
+            animation: fadeUp 0.6s ease-out;
+        }}
+        @keyframes fadeUp {{
+            from {{ opacity: 0; transform: translateY(16px); }}
+            to   {{ opacity: 1; transform: translateY(0); }}
+        }}
+        .icon {{
+            width: 56px; height: 56px;
+            margin: 0 auto 20px;
+            background: rgba(255,200,50,0.1);
+            border: 1px solid rgba(255,200,50,0.25);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            animation: pop 0.7s ease-out;
+        }}
+        .icon svg {{ width: 28px; height: 28px; }}
+        @keyframes pop {{
+            0%   {{ transform: scale(0); }}
+            70%  {{ transform: scale(1.15); }}
+            100% {{ transform: scale(1); }}
+        }}
+        h1 {{
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: -0.02em;
+            margin-bottom: 6px;
+        }}
+        .subtitle {{
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 28px;
+        }}
+        .details {{
+            display: flex;
+            gap: 12px;
+            margin-bottom: 28px;
+        }}
+        .detail {{
+            flex: 1;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 14px 12px;
+            text-align: center;
+        }}
+        .detail .label {{
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 4px;
+        }}
+        .detail .value {{
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #fff;
+            word-break: break-all;
+        }}
+        .detail .value.gold {{ color: #FFC832; }}
+        .hint {{
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 20px;
+        }}
+        .btn {{
+            display: inline-block;
+            background: #fff;
+            color: #000;
+            padding: 12px 28px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            border: none;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+        }}
+        .btn:hover {{
+            background: #f0f0f0;
+            transform: scale(1.02);
+        }}
+        .btn:active {{ transform: scale(0.98); }}
+    </style>
+</head>
+<body>
+    <div class="logo">
+        <svg viewBox="0 0 1920 1920" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <g clip-path="url(#clip0_1_8)">
+                <path d="M0.00708008 960H576.003V1919.99H297.605C133.246 1919.99 0.00708008 1786.75 0.00708008 1622.39V960Z" fill="#FFFFFF"></path>
+                <rect x="0.000244141" y="383.997" width="543.054" height="2172.24" transform="rotate(-45 0.000244141 383.997)" fill="#FFC107"></rect>
+                <path d="M1344 0.00732422H1622.39C1786.75 0.00732422 1919.99 133.246 1919.99 297.605V960H1344V0.00732422Z" fill="#FFFFFF"></path>
+            </g>
+            <defs>
+                <clipPath id="clip0_1_8"><rect width="1920" height="1920" fill="white"></rect></clipPath>
+            </defs>
+        </svg>
+        <span>Nanode</span>
+    </div>
+    <div class="card">
+        <div class="icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#FFC832" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+            </svg>
+        </div>
+        <h1>Connected to Blender</h1>
+        <p class="subtitle">Welcome, {name}! Your account is linked.</p>
+        <div class="details">
+            <div class="detail">
+                <div class="label">Account</div>
+                <div class="value">{email}</div>
+            </div>
+            <div class="detail">
+                <div class="label">Credits</div>
+                <div class="value gold">{balance}</div>
+            </div>
+        </div>
+        <p class="hint">You can safely close this tab and return to Blender 🍌</p>
+        <button class="btn" onclick="window.close()">Close Tab</button>
+    </div>
+    <script>
+        // Try to auto-close after a short delay (works in some browsers if opened via API)
+        setTimeout(() => {{ window.close(); }}, 3000);
+    </script>
+</body>
+</html>"""
+
+
+class BANANA_OT_open_store(Operator):
+    """Open the credits store in browser"""
+    bl_idname = "banana.open_store"
+    bl_label = "Buy Credits"
+    bl_description = "Open the credits store to purchase more AI generation credits"
+
+    def execute(self, context):
+        import webbrowser
+        webbrowser.open("https://nanode.tech/pricing")
+        self.report({'INFO'}, "Store opened in browser")
+        return {'FINISHED'}
+
+
+class BANANA_OT_show_no_credits_popup(Operator):
+    """Show popup when user doesn't have enough credits"""
+    bl_idname = "banana.show_no_credits_popup"
+    bl_label = "Not Enough Credits"
+    bl_description = "Not enough credits for this generation"
+
+    credits_needed: IntProperty(name="Credits Needed", default=0)
+    credits_available: IntProperty(name="Credits Available", default=0)
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=340)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="⚠️ Not enough credits!", icon='ERROR')
+        layout.separator()
+        layout.label(text=f"This render needs {self.credits_needed} credits")
+        layout.label(text=f"You have {self.credits_available} credits")
+        layout.separator()
+        layout.operator("banana.open_store", text="🛒 Buy Credits", icon='URL')
+
