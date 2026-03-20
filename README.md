@@ -1,5 +1,9 @@
 # 🍌 Nano Banana Render
 
+
+https://github.com/user-attachments/assets/18d771d0-9bf6-48c2-8838-ad94efb71cb3
+
+
 **AI Render Engine for Blender** — not just an addon, a whole new render engine.
 
 Nano Banana integrates directly into Blender as a **standalone render engine** alongside Cycles and Eevee. Select it from the render engine dropdown and start generating photorealistic images from simple blockouts, depth maps, or existing renders — powered by **Google Gemini AI**.
