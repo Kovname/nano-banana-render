@@ -162,11 +162,11 @@ class ImageEditorProperties(PropertyGroup):
 
 class BANANA_PT_image_editor_panel(Panel):
     """Main Image Editor panel for AI post-processing"""
-    bl_label = "Nano Banana Pro Edit"
+    bl_label = "Nanode AI Editor"
     bl_idname = "BANANA_PT_image_editor_panel"
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
-    bl_category = "Nano Banana Pro"
+    bl_category = "Nanode AI Editor"
     
     @classmethod
     def poll(cls, context):
@@ -196,7 +196,7 @@ class BANANA_PT_image_editor_panel(Panel):
         if not has_token:
             row = layout.row()
             row.alert = True
-            row.operator("gemini.open_preferences", text="Set Beta Token", icon='ERROR')
+            row.operator("banana.google_login", text="Login with Google", icon='URL')
         else:
             # ─── Cost per render ───
             model_tier = 'pro' if props.ai_model == 'NANO_BANANA_PRO' else 'flash'
@@ -286,9 +286,9 @@ class BANANA_PT_image_editor_panel(Panel):
             row.scale_y = 1.5
             
             if is_paint_mode:
-                row.operator("nano_banana.apply_inpaint", text="✨ Apply Drawing", icon='CHECKMARK')
+                row.operator("nano_banana.apply_inpaint", text="Apply Drawing", icon='NONE')
             else:
-                row.operator("nano_banana.switch_to_paint", text="🎨 Draw", icon='BRUSH_DATA')
+                row.operator("nano_banana.switch_to_paint", text="Draw", icon='NONE')
             
             # Brush settings (only active when in paint mode)
             settings_box = box.box()
@@ -321,11 +321,11 @@ class BANANA_PT_image_editor_panel(Panel):
                 
                 # Show hint - inpainting is optional
                 if props.use_inpainting:
-                    box.label(text="💡 Draw WHERE (optional)", icon='INFO')
+                    box.label(text="Draw WHERE (optional)", icon='INFO')
                 else:
-                    box.label(text="💡 Describe what/where to add", icon='INFO')
+                    box.label(text="Describe what/where to add", icon='INFO')
             else:
-                box.label(text="💡 Click 📂 to load", icon='INFO')
+                box.label(text="Click 📂 to load", icon='INFO')
         
         # Main action buttons (skip if inpainting - has own button)
         if not props.use_inpainting:
@@ -354,7 +354,7 @@ class BANANA_PT_image_editor_panel(Panel):
                 col.operator("nano_banana.apply_edit", text="🔄 Processing...", icon='TIME')
             else:
                 if props.edit_prompt.strip():
-                    col.operator("nano_banana.apply_edit", text="🎬 Render", icon='RENDER_STILL')
+                    col.operator("nano_banana.apply_edit", text="Render", icon='NONE')
                 else:
                     col.enabled = False
                     col.operator("nano_banana.apply_edit", text="Enter prompt first", icon='INFO')
@@ -599,13 +599,16 @@ class NANO_BANANA_OT_apply_edit(Operator):
             }
             model_name = MODEL_MAP.get(props.ai_model, 'gemini-3.1-flash-image-preview')
             
+            # Get auth token (Google API key or beta token)
+            token = prefs.preferences.beta_token.strip() if prefs else ""
+
             # Start background thread
             thread = image_edit_thread.ImageEditThread(
                 image_path=image_path,
                 edit_prompt=props.edit_prompt,
                 mask_path=inpaint_guide_path,
                 reference_path=reference_path,
-                api_key="",  # TODO: migrate image_edit_thread to beta_api
+                api_key=token,
                 context=context,
                 original_image_name=image.name,
                 temp_dir=temp_dir,
@@ -890,7 +893,7 @@ class NANO_BANANA_OT_convert_render_result(Operator):
             if new_image.packed_file:
                 try:
                     os.remove(temp_path)
-                except:
+                except OSError:
                     pass
             else:
                 print(f"[NANO BANANA] Warning: Image not packed, keeping temp file: {temp_path}")

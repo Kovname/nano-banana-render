@@ -2,12 +2,12 @@ bl_info = {
     "name": "Nanode AI Render Engine",
     "blender": (4, 5, 0),  # Minimum version, supports up to 5.0+
     "category": "Render", 
-    "version": (2, 5, 0),
+    "version": (2, 6, 0),
     "author": "Kovname",
-    "description": "Professional AI rendering and editing suite for Blender — v2.5.0",
-    "location": "Render Properties (select 'Nano Banana' engine), Image Editor > N Panel > Nano Banana Pro Edit",
+    "description": "The First Generative Pipeline for Blender — Rendering & Texturing (v2.6.0)",
+    "location": "Render Properties (select 'Nano Banana' engine), Image Editor > N Panel > Nanode AI Editor",
     "doc_url": "https://nanode.tech/",
-    "tracker_url": "https://nanode.tech/",
+    "tracker_url": "https://github.com/Kovname/nano-banana-render/issues",
 }
 
 # Blender version compatibility helpers
@@ -23,11 +23,15 @@ def is_blender_5():
 
 import bpy
 from bpy.types import AddonPreferences
-from bpy.props import StringProperty
+from bpy.props import StringProperty, BoolProperty
 
 # Reload modules for development
 if "bpy" in locals():
     import importlib
+    if "log" in locals():
+        importlib.reload(log)
+    if "credentials" in locals():
+        importlib.reload(credentials)
     if "ui_panel" in locals():
         importlib.reload(ui_panel)
     if "operators" in locals():
@@ -46,8 +50,16 @@ if "bpy" in locals():
         importlib.reload(render_engine)
     if "beta_api" in locals():
         importlib.reload(beta_api)
+    if "texture_pipeline" in locals():
+        importlib.reload(texture_pipeline)
+    if "texture_operators" in locals():
+        importlib.reload(texture_operators)
+    if "updater" in locals():
+        importlib.reload(updater)
 
 # Import our modules
+from . import log
+from . import credentials
 from . import ui_panel
 from . import operators
 from . import depth_utils
@@ -57,6 +69,16 @@ from . import image_editor
 from . import image_edit_thread
 from . import render_engine
 from . import beta_api
+from . import texture_pipeline
+from . import texture_operators
+from . import updater
+
+def get_hwid_stable() -> str:
+    """Generate a stable 16-char Hardware ID hash based on MAC address."""
+    import uuid
+    import hashlib
+    mac = str(uuid.getnode()).encode('utf-8')
+    return hashlib.sha256(mac).hexdigest()[:16]
 
 class NanoBananaPreferences(AddonPreferences):
     bl_idname = __name__
@@ -66,6 +88,18 @@ class NanoBananaPreferences(AddonPreferences):
         description="Your API key (from Google login) or beta access token",
         default="",
         subtype='PASSWORD',
+    )
+    
+    eu_format: BoolProperty(
+        name="Allow sending generation data to improve Nanode",
+        description="When enabled, your generation parameters are sent to our server for additional processing. Your personal API keys remain only on your device and are never transmitted.",
+        default=True,
+    )
+
+    hwid: StringProperty(
+        name="Hardware ID",
+        default="",
+        options={'HIDDEN'},
     )
 
     # Account info display — show email on logged-in state
@@ -78,8 +112,8 @@ class NanoBananaPreferences(AddonPreferences):
         box.label(text="Account:", icon='USER')
         
         if self.beta_token.strip():
-            email = ops._get_user_email()
-            name = ops._get_user_name()
+            email = credentials.get_user_email()
+            name = credentials.get_user_name()
             
             if email:
                 # Show logged-in state with email (no checkmarks)
@@ -123,6 +157,11 @@ class NanoBananaPreferences(AddonPreferences):
             box.label(text="Or paste API key manually:", icon='INFO')
             box.prop(self, "beta_token")
         
+        # Privacy / Data Collection
+        box = layout.box()
+        box.label(text="Privacy & Data Collection:", icon='LOCKED')
+        box.prop(self, "eu_format")
+
         # Debug section
         box = layout.box()
         box.label(text="Debug Tools:", icon='TOOL_SETTINGS')
@@ -133,7 +172,7 @@ class NanoBananaPreferences(AddonPreferences):
                 row.operator("gemini.reset_state", text="Reset UI State", icon='FILE_REFRESH')
             if hasattr(bpy.types, 'GEMINI_OT_open_console'):  
                 row.operator("gemini.open_console", text="Open Console", icon='CONSOLE')
-        except:
+        except Exception:
             row.label(text="Debug operators not available", icon='INFO')
 
 # Registration - Core classes first
@@ -147,7 +186,6 @@ core_classes = (
     ui_panel.BANANA_PT_mist,
     ui_panel.BANANA_PT_style_reference,
     ui_panel.BANANA_PT_history_panel,
-    ui_panel.BANANA_PT_beta_npanel,
     operators.GEMINI_OT_ai_render,
     operators.GEMINI_OT_stop_render,
     operators.GEMINI_OT_load_history,
@@ -169,6 +207,17 @@ core_classes = (
     operators.BANANA_OT_logout,
     operators.BANANA_OT_open_store,
     operators.BANANA_OT_show_no_credits_popup,
+    ui_panel.BANANA_PT_texturing_npanel,
+    texture_operators.BANANA_OT_init_tex_cameras,
+    texture_operators.BANANA_OT_update_tex_cameras,
+    texture_operators.BANANA_OT_preview_tex_camera,
+    texture_operators.BANANA_OT_texture_draft,
+    texture_operators.BANANA_OT_texture_enhance,
+    texture_operators.BANANA_OT_cleanup_tex,
+    texture_operators.BANANA_OT_clear_tex_reference,
+    texture_operators.BANANA_OT_load_tex_reference,
+    updater.NANODE_OT_install_update,
+    updater.NANODE_OT_update_dialog,
 )
 
 # Optional debug classes (register separately to avoid conflicts)
@@ -222,27 +271,38 @@ def register():
     
     # Restore saved credentials on startup
     try:
-        operators.restore_credentials_on_startup()
+        credentials.restore_credentials_on_startup()
     except Exception as e:
         print(f"[NANO BANANA] Could not restore credentials: {e}")
+
+    # Auto-Updater
+    bpy.types.WindowManager.nanode_update_version = StringProperty(default="")
+    import threading
+    t = threading.Thread(target=updater.check_updates_in_background, args=(bl_info["version"],), daemon=True)
+    t.start()
+    if not bpy.app.timers.is_registered(updater.update_poll_timer):
+        bpy.app.timers.register(updater.update_poll_timer, first_interval=3.0)
 
 def unregister():
     # Unregister render engine
     try:
         render_engine.unregister()
-    except:
+    except Exception:
         pass
     
     # Stop any background threads
     try:
         threading_utils.stop_thread_manager()
-    except:
+    except Exception:
         pass
+        
+    if bpy.app.timers.is_registered(updater.update_poll_timer):
+        bpy.app.timers.unregister(updater.update_poll_timer)
     
     # Unregister Image Editor module
     try:
         image_editor.unregister()
-    except:
+    except Exception:
         pass
     
     for cls in reversed(classes):

@@ -43,7 +43,7 @@ class BlenderThreadManager:
         if self.timer_registered:
             try:
                 bpy.app.timers.unregister(self._process_queue)
-            except:
+            except Exception:
                 pass
             self.timer_registered = False
 
@@ -173,7 +173,7 @@ def save_reference_image_temp(scene) -> str:
             try:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
-            except:
+            except OSError:
                 pass
             return None
             
@@ -246,7 +246,7 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                 # Pack the render result too
                 try:
                     render_result.pack()
-                except:
+                except Exception:
                     pass
                 
                 # Update Image Editors
@@ -343,7 +343,7 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                 # Clean up temporary file (permanent copy was already made)
                 try:
                     os.unlink(temp_path)
-                except:
+                except OSError:
                     pass
                     
         except Exception as e:
@@ -351,28 +351,6 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
     
     execute_in_main_thread(_load_image)
 
-class RenderThread(threading.Thread):
-    """Background thread for AI rendering operations (DEPRECATED - use APIThread)"""
-    
-    def __init__(self, scene, depth_renderer, api_client, user_prompt: str):
-        super().__init__(daemon=True)
-        self.scene = scene
-        self.depth_renderer = depth_renderer
-        self.api_client = api_client
-        self.user_prompt = user_prompt
-        self._stop_event = threading.Event()
-        print("[GEMINI] RenderThread initialized (DEPRECATED)")
-    
-    def stop(self):
-        """Request thread to stop"""
-        print("[GEMINI] Stop requested for RenderThread")
-        self._stop_event.set()
-    
-    def run(self):
-        """Main thread execution"""
-        # This is deprecated - should not be used
-        print("[GEMINI] RenderThread is deprecated, use APIThread instead")
-        update_render_status(self.scene, "Deprecated render method used", False)
 
 class APIThread(threading.Thread):
     """Background thread for API calls only (render happens in main thread)"""
@@ -430,7 +408,7 @@ class APIThread(threading.Thread):
                         import os
                         os.unlink(reference_path)
                         print(f"[GEMINI] Reference temp file cleaned up")
-                    except:
+                    except OSError:
                         pass
             
             if self._stop_event.is_set():
@@ -607,7 +585,7 @@ class FullRenderThread(threading.Thread):
                         import os
                         os.unlink(reference_path)
                         print(f"[GEMINI] Reference temp file cleaned up")
-                    except:
+                    except OSError:
                         pass
                         
                 # CRITICAL: Clean up depth temp files after API usage

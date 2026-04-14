@@ -4,9 +4,20 @@ from bpy.props import IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 import os
 import tempfile
+import logging
 from . import gemini_api
 from . import depth_utils
 from . import threading_utils
+from .credentials import (
+    save_credentials_file,
+    load_credentials_file,
+    delete_credentials_file,
+    get_user_email,
+    get_user_name,
+    restore_credentials_on_startup,
+)
+
+logger = logging.getLogger("nano_banana")
 
 class GEMINI_OT_ai_render(Operator):
     """AI Render operator - main functionality"""
@@ -119,7 +130,7 @@ class GEMINI_OT_stop_render(Operator):
                 props = context.scene.gemini_render
                 props.is_rendering = False
                 props.status_text = "Error stopping - reset manually"
-            except:
+            except Exception:
                 pass
             self.report({'ERROR'}, f"Failed to stop render: {str(e)}")
             return {'CANCELLED'}
@@ -202,7 +213,7 @@ class GEMINI_OT_reset_state(Operator):
     def execute(self, context):
         """Reset UI state"""
         try:
-            print("[GEMINI] Force resetting UI state...")
+            logger.info("Force resetting UI state...")
             props = context.scene.gemini_render
             
             # Force reset all state
@@ -214,7 +225,7 @@ class GEMINI_OT_reset_state(Operator):
                 try:
                     GEMINI_OT_ai_render.current_thread.stop()
                     GEMINI_OT_ai_render.current_thread = None
-                except:
+                except Exception:
                     pass
             
             # Redraw UI
@@ -754,7 +765,7 @@ class GEMINI_OT_load_image_as_reference(Operator, ImportHelper):
                     self.filepath = os.path.expanduser('~')
             else:  # Linux/Mac
                 self.filepath = os.path.expanduser('~')
-        except:
+        except Exception:
             pass
             
         # Open the file browser
@@ -762,93 +773,7 @@ class GEMINI_OT_load_image_as_reference(Operator, ImportHelper):
         return {'RUNNING_MODAL'}
 
 
-class GEMINI_OT_load_example_reference(Operator):
-    """Load example reference image"""
-    bl_idname = "gemini.load_example_reference"
-    bl_label = "Load Example Reference"
-    bl_description = "Load an example reference image to test style transfer"
-    bl_options = {'REGISTER'}
 
-    def execute(self, context):
-        try:
-            props = context.scene.gemini_render
-            
-            # Create a simple example image programmatically
-            import bpy
-            import bmesh
-            from mathutils import Vector
-            
-            # Check if example image already exists
-            example_name = "Gemini_Example_Reference"
-            if example_name in bpy.data.images:
-                existing_img = bpy.data.images[example_name]
-                props.style_reference_image = existing_img
-                if not props.use_style_reference:
-                    props.use_style_reference = True
-                self.report({'INFO'}, "Example reference reloaded")
-                return {'FINISHED'}
-            
-            # Create a simple gradient example image
-            width, height = 512, 512
-            example_img = bpy.data.images.new(example_name, width, height)
-            
-            # Create a simple colorful pattern as example
-            pixels = [0.0] * (width * height * 4)  # RGBA
-            
-            for y in range(height):
-                for x in range(width):
-                    index = (y * width + x) * 4
-                    
-                    # Create a nice gradient pattern
-                    r = (x / width) * 0.8 + 0.2  # Red gradient
-                    g = (y / height) * 0.6 + 0.3  # Green gradient  
-                    b = ((x + y) / (width + height)) * 0.9 + 0.1  # Blue mix
-                    a = 1.0
-                    
-                    # Add some noise for texture
-                    import random
-                    noise = random.random() * 0.1 - 0.05
-                    r = max(0, min(1, r + noise))
-                    g = max(0, min(1, g + noise))
-                    b = max(0, min(1, b + noise))
-                    
-                    pixels[index] = r
-                    pixels[index + 1] = g  
-                    pixels[index + 2] = b
-                    pixels[index + 3] = a
-            
-            # Update the image
-            example_img.pixels = pixels
-            
-            # Set as reference
-            props.style_reference_image = example_img
-            
-            # Enable style reference if not enabled
-            if not props.use_style_reference:
-                props.use_style_reference = True
-            
-            self.report({'INFO'}, "Example reference created and loaded")
-            print("🎨 [GEMINI] Example reference image created")
-            return {'FINISHED'}
-            
-        except Exception as e:
-            # Fallback: Show helpful message
-            message = (
-                "Style reference ideas:\n" +
-                "• Find architectural photos online\n" +
-                "• Download artwork or paintings\n" +
-                "• Use nature photography\n" +
-                "• Load via 'Load Photo from Computer' button"
-            )
-            
-            def draw_message(self, context):
-                layout = self.layout
-                for line in message.split('\n'):
-                    layout.label(text=line)
-            
-            context.window_manager.popup_menu(draw_message, title="Style Reference Examples", icon='IMAGE_DATA')
-            self.report({'INFO'}, "Check popup for reference image ideas")
-            return {'FINISHED'}
 
 
 # ─── Beta Operators ───────────────────────────────────────────
@@ -930,9 +855,14 @@ class BANANA_OT_refresh_balance(Operator):
         from . import beta_api
 
         try:
-            balance = beta_api.get_balance()
+            info = beta_api.get_balance_info()
+            balance = info.get("balance", -1)
             if balance >= 0:
-                context.scene.gemini_render.beta_balance = balance
+                props = context.scene.gemini_render
+                props.beta_balance = balance
+                # Sync feedback bonus status from server
+                if info.get("feedback_given", False):
+                    props.has_submitted_feedback = True
                 self.report({'INFO'}, f"Balance: {balance} generations left")
             else:
                 self.report({'WARNING'}, "Could not fetch balance — check your token")
@@ -1014,17 +944,17 @@ class BANANA_OT_google_login(Operator):
                             prefs = bpy.context.preferences.addons.get("nano_banana_render")
                             if prefs and hasattr(prefs.preferences, "beta_token"):
                                 prefs.preferences.beta_token = api_key
-                                print(f"[NANODE] ✅ API key saved automatically for {email}")
+                                logger.info("API key saved automatically for %s", email)
 
                             # Save to persistent file
-                            _save_credentials_file(api_key, email, name)
+                            save_credentials_file(api_key, email, name)
 
                             # Update balance in scene props
                             try:
                                 for scene in bpy.data.scenes:
                                     if hasattr(scene, "gemini_render"):
                                         scene.gemini_render.beta_balance = int(balance) if balance.isdigit() else 0
-                            except:
+                            except Exception:
                                 pass
 
                             # Redraw all UI
@@ -1033,7 +963,7 @@ class BANANA_OT_google_login(Operator):
                                     area.tag_redraw()
 
                         except Exception as ex:
-                            print(f"[NANODE] Error saving credentials: {ex}")
+                            logger.error("Error saving credentials: %s", ex)
 
                     execute_in_main_thread(_save_credentials)
 
@@ -1055,7 +985,7 @@ class BANANA_OT_google_login(Operator):
         def _run_server():
             try:
                 server.handle_request()  # Handle single request then stop
-            except:
+            except Exception:
                 pass
 
         thread = threading.Thread(target=_run_server, daemon=True)
@@ -1082,89 +1012,25 @@ class BANANA_OT_logout(Operator):
             prefs.preferences.beta_token = ""
 
         # Clear persistent file
-        _delete_credentials_file()
+        delete_credentials_file()
 
         # Reset balance
         try:
             context.scene.gemini_render.beta_balance = -1
-        except:
+        except Exception:
             pass
 
         self.report({'INFO'}, "Logged out successfully")
         return {'FINISHED'}
 
 
-# ─── Credential Persistence ──────────────────────────────────
 
-def _get_credentials_path() -> str:
-    """Get path to persistent credentials file."""
-    import tempfile
-    cred_dir = os.path.join(tempfile.gettempdir(), "nanode_blender")
-    os.makedirs(cred_dir, exist_ok=True)
-    return os.path.join(cred_dir, "credentials.json")
-
-
-def _save_credentials_file(api_key: str, email: str, name: str):
-    """Save credentials to a persistent file."""
-    import json
-    try:
-        data = {"api_key": api_key, "email": email, "name": name}
-        with open(_get_credentials_path(), "w") as f:
-            json.dump(data, f)
-        print(f"[NANODE] Credentials saved to {_get_credentials_path()}")
-    except Exception as e:
-        print(f"[NANODE] Failed to save credentials: {e}")
-
-
-def _load_credentials_file() -> dict:
-    """Load credentials from persistent file. Returns {} if not found."""
-    import json
-    try:
-        path = _get_credentials_path()
-        if os.path.exists(path):
-            with open(path, "r") as f:
-                return json.load(f)
-    except Exception as e:
-        print(f"[NANODE] Failed to load credentials: {e}")
-    return {}
-
-
-def _delete_credentials_file():
-    """Delete the persistent credentials file."""
-    try:
-        path = _get_credentials_path()
-        if os.path.exists(path):
-            os.remove(path)
-            print(f"[NANODE] Credentials file deleted")
-    except Exception as e:
-        print(f"[NANODE] Failed to delete credentials: {e}")
-
-
-def _get_user_email() -> str:
-    """Get the stored user email from credentials file."""
-    data = _load_credentials_file()
-    return data.get("email", "")
-
-
-def _get_user_name() -> str:
-    """Get the stored user name from credentials file."""
-    data = _load_credentials_file()
-    return data.get("name", "")
-
-
-def restore_credentials_on_startup():
-    """Called on addon startup to restore credentials from file."""
-    data = _load_credentials_file()
-    if data.get("api_key"):
-        try:
-            prefs = bpy.context.preferences.addons.get("nano_banana_render")
-            if prefs and hasattr(prefs.preferences, "beta_token"):
-                current = prefs.preferences.beta_token.strip()
-                if not current:
-                    prefs.preferences.beta_token = data["api_key"]
-                    print(f"[NANODE] ✅ Credentials restored for {data.get('email', '?')}")
-        except Exception as e:
-            print(f"[NANODE] Could not restore credentials: {e}")
+# ─── Backward compatibility aliases ──────────────────────────
+# These re-export the credential functions so existing internal
+# references (e.g. __init__.py calling operators.restore_credentials_on_startup)
+# continue to work without changes.
+_get_user_email = get_user_email
+_get_user_name = get_user_name
 
 
 def _login_success_html(name: str, email: str, balance: str) -> str:

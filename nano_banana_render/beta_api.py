@@ -25,6 +25,30 @@ def _get_token() -> str:
     return ""
 
 
+def _get_hwid() -> str:
+    """Get the hardware ID from addon preferences."""
+    import bpy
+    prefs = bpy.context.preferences.addons.get("nano_banana_render")
+    if prefs and hasattr(prefs.preferences, "hwid"):
+        val = prefs.preferences.hwid
+        if not val:
+            from . import get_hwid_stable
+            val = get_hwid_stable()
+            prefs.preferences.hwid = val
+        return val
+    from . import get_hwid_stable
+    return get_hwid_stable()
+
+
+def _get_eu_format() -> bool:
+    """Check if the user consented to European format data collection."""
+    import bpy
+    prefs = bpy.context.preferences.addons.get("nano_banana_render")
+    if prefs and hasattr(prefs.preferences, "eu_format"):
+        return prefs.preferences.eu_format
+    return True
+
+
 def _post(endpoint: str, data: dict, timeout: int = 120) -> dict:
     """POST JSON to server endpoint. Returns parsed response."""
     url = f"{_get_server_url()}{endpoint}"
@@ -45,7 +69,7 @@ def _post(endpoint: str, data: dict, timeout: int = 120) -> dict:
         try:
             body = json.loads(e.read().decode("utf-8"))
             detail = body.get("detail", str(e))
-        except:
+        except (ValueError, UnicodeDecodeError):
             detail = str(e)
         raise BetaAPIError(e.code, detail)
     except URLError as e:
@@ -66,7 +90,7 @@ def _get(endpoint: str, timeout: int = 10) -> dict:
         try:
             body = json.loads(e.read().decode("utf-8"))
             detail = body.get("detail", str(e))
-        except:
+        except (ValueError, UnicodeDecodeError):
             detail = str(e)
         raise BetaAPIError(e.code, detail)
     except URLError as e:
@@ -94,12 +118,13 @@ def generate(
     gen_type: str = "render_depth",
     width: int = 1024,
     height: int = 1024,
+    user_prompt: Optional[str] = None,
 ) -> Tuple[bytes, int, int]:
     """
     Generate an AI image via the beta server.
 
     Args:
-        prompt: User's text prompt
+        prompt: Full system prompt sent to the AI
         model: Model name (e.g. 'gemini-3-pro-image-preview')
         input_image_path: Path to the input render / depth map
         reference_image_path: Optional style reference image path
@@ -107,6 +132,7 @@ def generate(
         gen_type: 'render_depth', 'render_eevee', or 'inpaint'
         width: Generation width limit
         height: Generation height limit
+        user_prompt: The user's original prompt text (before system template)
 
     Returns:
         (...)
@@ -135,9 +161,26 @@ def generate(
         except Exception as e:
             print(f"[BETA API] Failed to read mask image: {e}")
 
+    hwid = _get_hwid()
+
+    # Get versions for telemetry
+    import bpy
+    blender_version = bpy.app.version_string
+    addon_version = "unknown"
+    try:
+        import addon_utils
+        for mod in addon_utils.modules():
+            if mod.__name__ == "nano_banana_render":
+                vers = mod.bl_info.get("version", (0,0,0))
+                addon_version = ".".join(str(v) for v in vers)
+                break
+    except Exception:
+        pass
+
     data = {
         "token": token,
         "prompt": prompt,
+        "user_prompt": user_prompt,
         "model": model,
         "input_image": input_b64,
         "reference_image": ref_b64,
@@ -145,6 +188,9 @@ def generate(
         "gen_type": gen_type,
         "width": width,
         "height": height,
+        "hwid": hwid,
+        "addon_version": addon_version,
+        "blender_version": blender_version,
     }
 
     print(f"[BETA API] Sending generation request ({gen_type}, model={model})")
@@ -172,6 +218,22 @@ def get_balance() -> int:
         return -1
 
 
+def get_balance_info() -> dict:
+    """Fetch balance + feedback_given flag from server."""
+    token = _get_token()
+    if not token:
+        return {"balance": -1, "feedback_given": False}
+
+    try:
+        resp = _get(f"/balance/{token}")
+        return {
+            "balance": resp.get("balance", 0),
+            "feedback_given": resp.get("feedback_given", False),
+        }
+    except BetaAPIError:
+        return {"balance": -1, "feedback_given": False}
+
+
 def get_credit_info() -> dict:
     """Get full balance info including user_type, pricing, store_url."""
     token = _get_token()
@@ -191,11 +253,14 @@ def send_rating(generation_id: int, rating: str) -> bool:
     if not token:
         return False
 
+    hwid = _get_hwid()
+
     try:
         _post("/rate", {
             "token": token,
             "generation_id": generation_id,
             "rating": rating,
+            "hwid": hwid,
         }, timeout=10)
         print(f"[BETA API] Rated generation #{generation_id}: {rating}")
         return True
@@ -210,9 +275,12 @@ def send_feedback(text: str) -> int:
     if not token:
         raise BetaAPIError(401, "No beta token configured")
 
+    hwid = _get_hwid()
+
     resp = _post("/feedback", {
         "token": token,
         "text": text,
+        "hwid": hwid,
     }, timeout=10)
 
     new_balance = resp.get("balance", 0)

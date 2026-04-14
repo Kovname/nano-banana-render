@@ -90,7 +90,7 @@ class BANANA_OT_render(bpy.types.Operator):
             self.report({'ERROR'}, f"Viewport capture failed: {e}")
             try:
                 depth_renderer.cleanup_temp_files()
-            except:
+            except Exception:
                 pass
             return {'CANCELLED'}
 
@@ -105,6 +105,7 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
     bl_idname = 'NANO_BANANA'
     bl_label = 'Nano Banana'
     bl_use_preview = False
+    bl_use_shading_nodes_custom = False
     bl_use_eevee_viewport = True
     bl_use_gpu_context = False
 
@@ -116,6 +117,9 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
         render_start = time.time()
         scene = depsgraph.scene
         props = scene.gemini_render if hasattr(scene, 'gemini_render') else None
+
+        if self.is_preview:
+            return  # Nano Banana does not support rendering material preview spheres
 
         if not props:
             self.report({'ERROR'}, "Nano Banana properties not found")
@@ -187,7 +191,7 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
                 def _update_direct_ui():
                     if hasattr(scene, 'gemini_render'):
                         scene.gemini_render.beta_balance = -1  # Hide balance
-                        scene.gemini_render.last_generation_id = ""
+                        scene.gemini_render.last_generation_id = 0
                         scene.gemini_render.last_generation_rated = False
                 threading_utils.execute_in_main_thread(_update_direct_ui)
                 
@@ -205,21 +209,32 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
                 
             else:
                 # ─── Server Mode (Nanode API) ───
+                # Build prompt client-side (same logic as direct mode)
+                from .gemini_api import GeminiAPI
+                is_color = (render_mode == 'EEVEE')
+                prompt_builder = GeminiAPI.__new__(GeminiAPI)
+                full_prompt = prompt_builder._build_prompt(
+                    props.prompt,
+                    has_reference=bool(reference_path),
+                    is_color_render=is_color
+                )
+                
                 image_data, generation_id, new_balance = beta_api.generate(
-                    prompt=props.prompt,
+                    prompt=full_prompt,
                     model=model_name,
                     input_image_path=depth_path,
                     reference_image_path=reference_path,
                     gen_type=gen_type,
                     width=width,
                     height=height,
+                    user_prompt=props.prompt,
                 )
     
                 # Update balance and generation tracking for rating UI
                 def _update_beta_ui():
                     if hasattr(scene, 'gemini_render'):
                         scene.gemini_render.beta_balance = new_balance
-                        scene.gemini_render.last_generation_id = generation_id or ""
+                        scene.gemini_render.last_generation_id = int(generation_id) if generation_id else 0
                         scene.gemini_render.last_generation_rated = False
                 threading_utils.execute_in_main_thread(_update_beta_ui)
 
@@ -231,7 +246,7 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
                     detail = json.loads(e.message) if isinstance(e.message, str) and e.message.startswith('{') else {}
                     credits_needed = detail.get('credits_needed', 0)
                     credits_available = detail.get('credits_available', 0)
-                except:
+                except (ValueError, KeyError):
                     credits_needed = 0
                     credits_available = 0
                 
@@ -264,12 +279,12 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
             if reference_path:
                 try:
                     os.unlink(reference_path)
-                except:
+                except OSError:
                     pass
             from . import depth_utils
             try:
                 depth_utils.DepthRenderer().cleanup_temp_files()
-            except:
+            except Exception:
                 pass
 
         if self.test_break():
@@ -278,56 +293,53 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
         # --- Display AI result in F12 viewer ---
         self.update_stats("", "Loading AI result...")
 
-        import tempfile
-        temp_path = None
         render_w = int(scene.render.resolution_x * scene.render.resolution_percentage / 100)
         render_h = int(scene.render.resolution_y * scene.render.resolution_percentage / 100)
 
+        # Write a minimal frame to the render buffer — required for Blender
+        # to finish the render cycle properly.
         try:
-            # Save image_data to temp file
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-                f.write(image_data)
-                temp_path = f.name
-
-            # Load into Blender as a proper Image datablock with sRGB colorspace
-            # This ensures it displays with correct colors, bypassing View Transform
-            result_img_name = "Nano Banana Render"
-            if result_img_name in bpy.data.images:
-                bpy.data.images.remove(bpy.data.images[result_img_name])
-
-            result_img = bpy.data.images.load(temp_path)
-            result_img.name = result_img_name
-            result_img.colorspace_settings.name = 'sRGB'
-            result_img.pack()  # Pack into .blend so it survives temp file deletion
-
-            # Store reference for the timer to pick up
-            _pre_capture['result_image'] = result_img_name
-
-            # Write a minimal frame to the render buffer — required for Blender
-            # to finish the render cycle properly. The actual image will be shown
-            # by swapping the F12 Image Editor to our Image datablock via a timer.
             result = self.begin_result(0, 0, render_w, render_h)
             self.end_result(result)
-
         except Exception as e:
-            print(f"[NANO BANANA] Error loading AI result: {e}")
-            self.report({'ERROR'}, f"Failed to display result: {e}")
-            return
-        finally:
-            if temp_path:
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
+            print(f"[NANO BANANA] Error writing to render buffer: {e}")
 
-        # --- Save to history (in main thread) ---
+        # --- Save to history and load image (in main thread) ---
         elapsed = time.time() - render_start
 
-        def _save_history():
+        def _process_result_main_thread():
+            import tempfile
+            temp_path = None
+            
             try:
                 _save_render_to_history(image_data, props.prompt, scene)
             except Exception as e:
                 print(f"[NANO BANANA] History save error: {e}")
+                
+            try:
+                # Save image_data to temp file and load into Blender as a proper Image datablock
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+                    f.write(image_data)
+                    temp_path = f.name
+
+                result_img_name = "Nano Banana Render"
+                if result_img_name in bpy.data.images:
+                    bpy.data.images.remove(bpy.data.images[result_img_name])
+
+                result_img = bpy.data.images.load(temp_path)
+                result_img.name = result_img_name
+                result_img.colorspace_settings.name = 'sRGB'
+                result_img.pack()  # Pack into .blend so it survives temp file deletion
+
+                _pre_capture['result_image'] = result_img_name
+            except Exception as e:
+                print(f"[NANO BANANA] Error loading AI result into Blender: {e}")
+            finally:
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
 
             # Update status with timing
             if hasattr(scene, 'gemini_render'):
@@ -350,7 +362,7 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
                                         print(f"[NANO BANANA] Swapped F12 viewer to '{result_img_name}' (sRGB)")
                         area.tag_redraw()
 
-        threading_utils.execute_in_main_thread(_save_history)
+        threading_utils.execute_in_main_thread(_process_result_main_thread)
 
         self.update_stats("", f"AI render completed in {elapsed:.1f}s")
 
@@ -450,6 +462,55 @@ def get_standard_panels():
 addon_keymaps = []
 _registered_panels = []
 
+# Track previous engine to detect switch
+_last_engine = [None]
+
+
+def _on_engine_switch(scene):
+    """Initialize viewport when user first switches to Nano Banana engine.
+    Sets the viewport shading to match the current render_mode so the
+    viewport is never blank on first selection."""
+    try:
+        props = scene.gemini_render if hasattr(scene, 'gemini_render') else None
+        if not props:
+            return
+
+        if props.render_mode == 'EEVEE':
+            # Regular Render — show Material Preview with Combined pass
+            for window in bpy.context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        for space in area.spaces:
+                            if space.type == 'VIEW_3D':
+                                space.shading.type = 'MATERIAL'
+                                if hasattr(space.shading, 'render_pass'):
+                                    space.shading.render_pass = 'COMBINED'
+                                if hasattr(space.shading, 'use_scene_lights'):
+                                    space.shading.use_scene_lights = True
+                        area.tag_redraw()
+                        return
+        else:
+            # Depth Map — show Material Preview with Mist pass
+            from . import ui_panel
+            ui_panel.on_render_mode_change(props, bpy.context)
+    except Exception as e:
+        print(f"[NANO BANANA] Engine switch viewport init error: {e}")
+
+
+@bpy.app.handlers.persistent
+def _depsgraph_update_handler(scene, depsgraph=None):
+    """Detect when render engine changes to NANO_BANANA and initialise viewport."""
+    try:
+        current = scene.render.engine
+        if current != _last_engine[0]:
+            prev = _last_engine[0]
+            _last_engine[0] = current
+            if current == 'NANO_BANANA' and prev is not None:
+                # User just switched to our engine — set up viewport
+                _on_engine_switch(scene)
+    except Exception:
+        pass
+
 
 def register():
     bpy.utils.register_class(NanoBananaRenderEngine)
@@ -469,8 +530,21 @@ def register():
         kmi = km.keymap_items.new("banana.ai_render", 'F12', 'PRESS')
         addon_keymaps.append((km, kmi))
 
+    # Register engine-switch handler
+    if _depsgraph_update_handler not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_depsgraph_update_handler)
+    # Seed current engine so we don't trigger on addon load
+    try:
+        _last_engine[0] = bpy.context.scene.render.engine
+    except Exception:
+        _last_engine[0] = None
+
 
 def unregister():
+    # Remove engine-switch handler
+    if _depsgraph_update_handler in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_depsgraph_update_handler)
+
     # Remove keymaps
     for km, kmi in addon_keymaps:
         km.keymap_items.remove(kmi)

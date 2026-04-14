@@ -93,11 +93,20 @@ class ImageEditThread(threading.Thread):
                     width=width,
                     height=height
                 )
-                generation_id = ""
+                generation_id = 0
                 new_balance = -1
             else:
                 # ─── Server Mode (Nanode API) ───
                 from . import beta_api
+                from .gemini_api import GeminiAPI
+                
+                # Build prompt client-side (same logic as direct mode)
+                prompt_builder = GeminiAPI.__new__(GeminiAPI)
+                full_prompt = prompt_builder._build_edit_prompt(
+                    self.edit_prompt,
+                    has_mask=bool(self.mask_path),
+                    has_reference=bool(self.reference_path)
+                )
                 
                 print(f"[NANO BANANA] Calling beta_api.generate for INPAINT...")
                 print(f"  - Image: {self.image_path}")
@@ -106,7 +115,7 @@ class ImageEditThread(threading.Thread):
                 print(f"  - Reference: {self.reference_path}")
                 
                 image_data, generation_id, new_balance = beta_api.generate(
-                    prompt=self.edit_prompt,
+                    prompt=full_prompt,
                     model=self.model_name,
                     input_image_path=self.image_path,
                     reference_image_path=self.reference_path,
@@ -147,7 +156,7 @@ class ImageEditThread(threading.Thread):
                 if hasattr(bpy.context.scene, 'gemini_render'):
                     props = bpy.context.scene.gemini_render
                     props.beta_balance = new_balance
-                    props.last_generation_id = generation_id
+                    props.last_generation_id = int(generation_id) if generation_id else 0
                     props.last_generation_rated = False
             self._execute_in_main_thread(update_scene_props)
             
