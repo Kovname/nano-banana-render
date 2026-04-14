@@ -126,11 +126,16 @@ Apply incredible, context-aware textures directly onto your models.
 | <img src="docs/images/texture_input.gif" height="200" alt="Save as docs/images/texture_input.gif"> | *"Arcane style, man in jacket, red tie, scar on face"* | <img src="docs/images/texture_result.gif" height="200" alt="Save as docs/images/texture_result.gif"> |
 
 ### 6. Inpainting
-Draw a mask, upload an object reference, and the Nanode Editor will integrate it with matched lighting and shadows.
+Draw a mask and the Nanode Editor will inpaint it with matched lighting and shadows.
 | Mask | Prompt | Result |
 | :---: | :---: | :---: |
 | <img src="docs/images/edit_mask.png" height="200"> | *"Add spot light"* | <img src="docs/images/edit_result.png" height="200"> |
 
+### 7. AI Image Editor
+Global edit your image with prompt 
+| Original | Prompt | Result |
+| :---: | :---: | :---: |
+| <img src="docs/images/edit_input.png" height="200"> | *"Make the background blue and the text green, add some stars"* | <img src="docs/images/edit_output.png" height="200"> |
 ---
 
 ## 💸 Credits & Pricing
