@@ -1,5 +1,7 @@
 # 🍌 Nano Banana Render
 
+https://github.com/user-attachments/assets/6728e18d-5ab0-4358-877e-9ee370678d84
+
 **The First Generative Pipeline for Blender — Rendering & Texturing.**
 
 Nano Banana integrates seamlessly into Blender as a **standalone render engine** alongside Cycles and Eevee. Select it from the render engine dropdown and start generating photorealistic images from simple blockouts, depth maps, or existing renders — powered by **Google Gemini AI**. 
