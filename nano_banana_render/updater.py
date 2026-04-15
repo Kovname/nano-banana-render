@@ -118,13 +118,14 @@ class NANODE_OT_update_dialog(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def check_updates_in_background(local_version_tuple):
+def check_updates_in_background(local_version_tuple, local_build_number=0):
     """Network request to check version silently"""
     try:
         req = urllib.request.Request("https://api.nanode.tech/api/addon_version")
         with urllib.request.urlopen(req, context=_ssl_ctx, timeout=5) as response:
             data = json.loads(response.read().decode('utf-8'))
             server_version = data.get("version")
+            server_build = data.get("build_number", 0)
             
             if server_version:
                 # Convert e.g. "(1, 0, 1)" or "1.0.1" to tuple
@@ -132,14 +133,22 @@ def check_updates_in_background(local_version_tuple):
                 parts = clean_str.split('.')
                 srv_tuple = tuple(int(p.strip()) for p in parts if p.strip().isdigit())
                 
-                # Check if server version is newer
+                # Check if server version is newer OR same version with higher build number
+                needs_update = False
                 if srv_tuple > local_version_tuple:
-                    # Update WindowManager property from background thread
+                    needs_update = True
+                elif srv_tuple == local_version_tuple and int(server_build) > int(local_build_number):
+                    needs_update = True
+                
+                if needs_update:
+                    # Include build info in version string for display
+                    display = server_version
+                    if int(server_build) > 0:
+                        display = f"{server_version} (build {server_build})"
                     import bpy
-                    bpy.context.window_manager.nanode_update_version = server_version
+                    bpy.context.window_manager.nanode_update_version = display
     except Exception as e:
         # Silently fail update checks
-        # print("Update check failed:", e)
         pass
 
 

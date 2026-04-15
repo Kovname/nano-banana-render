@@ -10,6 +10,9 @@ bl_info = {
     "tracker_url": "https://github.com/Kovname/nano-banana-render/issues",
 }
 
+# Build number — increment this for hotfix releases without changing bl_info["version"].
+# The updater checks both version AND build number, so users get prompted even for same-version fixes.
+BUILD_NUMBER = 1
 # Blender version compatibility helpers
 def get_blender_version():
     """Get Blender version as tuple (major, minor, patch)"""
@@ -278,7 +281,7 @@ def register():
     # Auto-Updater
     bpy.types.WindowManager.nanode_update_version = StringProperty(default="")
     import threading
-    t = threading.Thread(target=updater.check_updates_in_background, args=(bl_info["version"],), daemon=True)
+    t = threading.Thread(target=updater.check_updates_in_background, args=(bl_info["version"], BUILD_NUMBER), daemon=True)
     t.start()
     if not bpy.app.timers.is_registered(updater.update_poll_timer):
         bpy.app.timers.register(updater.update_poll_timer, first_interval=3.0)

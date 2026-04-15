@@ -270,10 +270,7 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
             if type(e).__name__ == "GeminiAPIError":
                 self.report({'ERROR'}, f"Google API Error: {str(e)}")
             else:
-                self.report({'ERROR'}, f"Render Error: {str(e)}")
-            return
-        except Exception as e:
-            self.report({'ERROR'}, f"AI generation failed: {str(e)}")
+                self.report({'ERROR'}, f"AI generation failed: {str(e)}")
             return
         finally:
             if reference_path:
@@ -290,21 +287,71 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
         if self.test_break():
             return
 
-        # --- Display AI result in F12 viewer ---
+        # --- Validate image data ---
+        if not image_data or len(image_data) < 100:
+            self.report({'ERROR'}, f"AI returned empty or invalid image ({len(image_data) if image_data else 0} bytes)")
+            return
+
+        # --- Display AI result directly in F12 render buffer ---
         self.update_stats("", "Loading AI result...")
 
         render_w = int(scene.render.resolution_x * scene.render.resolution_percentage / 100)
         render_h = int(scene.render.resolution_y * scene.render.resolution_percentage / 100)
 
-        # Write a minimal frame to the render buffer — required for Blender
-        # to finish the render cycle properly.
+        # Decode PNG bytes into raw pixel data and write directly into render buffer.
+        # This eliminates the race condition where an empty frame was shown first.
+        buffer_written = False
         try:
-            result = self.begin_result(0, 0, render_w, render_h)
-            self.end_result(result)
+            import io
+            try:
+                from PIL import Image as PILImage
+                pil_img = PILImage.open(io.BytesIO(image_data)).convert('RGBA')
+                pil_img = pil_img.resize((render_w, render_h), PILImage.LANCZOS)
+                
+                # Convert to float RGBA list (Blender expects 0.0-1.0)
+                import struct
+                raw = pil_img.tobytes()
+                pixel_count = render_w * render_h
+                pixels = []
+                for i in range(pixel_count):
+                    offset = i * 4
+                    r = raw[offset] / 255.0
+                    g = raw[offset + 1] / 255.0
+                    b = raw[offset + 2] / 255.0
+                    a = raw[offset + 3] / 255.0
+                    pixels.extend([r, g, b, a])
+                
+                # Blender render result expects bottom-to-top row order (flip vertically)
+                flipped_pixels = []
+                for row in range(render_h - 1, -1, -1):
+                    row_start = row * render_w * 4
+                    row_end = row_start + render_w * 4
+                    flipped_pixels.extend(pixels[row_start:row_end])
+                
+                result = self.begin_result(0, 0, render_w, render_h)
+                layer = result.layers[0]
+                try:
+                    layer.passes["Combined"].rect = [flipped_pixels[i:i+4] for i in range(0, len(flipped_pixels), 4)]
+                except Exception:
+                    # Fallback: try .rect flat assignment
+                    layer.passes["Combined"].rect.foreach_set(flipped_pixels)
+                self.end_result(result)
+                buffer_written = True
+                print(f"[NANO BANANA] Wrote {render_w}x{render_h} AI image directly to render buffer (PIL)")
+            except ImportError:
+                print("[NANO BANANA] PIL not available, using bpy.data.images fallback")
         except Exception as e:
-            print(f"[NANO BANANA] Error writing to render buffer: {e}")
+            print(f"[NANO BANANA] Direct buffer write failed: {e}")
 
-        # --- Save to history and load image (in main thread) ---
+        if not buffer_written:
+            # Fallback: write empty frame first, then load via file
+            try:
+                result = self.begin_result(0, 0, render_w, render_h)
+                self.end_result(result)
+            except Exception as e:
+                print(f"[NANO BANANA] Error writing fallback to render buffer: {e}")
+
+        # --- Save to history and load image as Blender datablock (in main thread) ---
         elapsed = time.time() - render_start
 
         def _process_result_main_thread():
