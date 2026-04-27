@@ -76,8 +76,6 @@ def restore_credentials_on_startup() -> None:
                 current = prefs.preferences.beta_token.strip()
                 if not current:
                     prefs.preferences.beta_token = data["api_key"]
-                    logger.info(
-                        "Credentials restored for %s", data.get("email", "?")
-                    )
+                    logger.info("Credentials restored from file.")
         except Exception as e:
             logger.warning("Could not restore credentials: %s", e)

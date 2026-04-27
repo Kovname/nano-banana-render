@@ -1,4 +1,8 @@
 import bpy
+
+OP_RATE_GEN = "banana.rate_generation"
+OP_TOGGLE_FEEDBACK = "banana.toggle_feedback"
+from typing import Callable, Any, Optional
 from bpy.types import PropertyGroup, Panel
 from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty, IntProperty, CollectionProperty, PointerProperty
 
@@ -14,6 +18,12 @@ class GeminiRenderHistoryItem(PropertyGroup):
     timestamp: StringProperty(
         name="Timestamp", 
         description="When this render was created",
+        default=""
+    )
+    
+    filepath: StringProperty(
+        name="File Path",
+        description="Path to the saved image file for preview",
         default=""
     )
     
@@ -361,7 +371,7 @@ class GeminiRenderProperties(PropertyGroup):
 
 # ─── Main Panel (like Render settings header in Cycles) ───
 
-class BANANA_PT_render_panel(Panel):
+class BananaPTRenderPanel(Panel):
     """Nano Banana main settings — appears under Render Properties when engine is selected"""
     bl_label = "Nano Banana"
     bl_idname = "BANANA_PT_render_panel"
@@ -435,13 +445,18 @@ class BANANA_PT_render_panel(Panel):
                     box = layout.box()
                     box.label(text="Rate this result:", icon='QUESTION')
                     row = box.row(align=True)
-                    op_like = row.operator("banana.rate_generation", text="👍 Good")
+                    op_like = row.operator(OP_RATE_GEN, text="👍 Good")
                     op_like.rating = "like"
-                    op_dislike = row.operator("banana.rate_generation", text="👎 Bad")
+                    op_dislike = row.operator(OP_RATE_GEN, text="👎 Bad")
                     op_dislike.rating = "dislike"
             
             # ─── Feedback section ─────────────────────────────
-            bonus_label = "" if is_api_user else ("+50 Credits" if is_credit_user else "+50 Gens")
+            if is_api_user:
+                bonus_label = ""
+            elif is_credit_user:
+                bonus_label = "+50 Credits"
+            else:
+                bonus_label = "+50 Gens"
             
             if props.show_feedback:
                 box = layout.box()
@@ -459,10 +474,10 @@ class BANANA_PT_render_panel(Panel):
             else:
                 row = layout.row()
                 if props.has_submitted_feedback:
-                    row.operator("banana.toggle_feedback", text="Thanks for your Feedback!", icon='HEART')
+                    row.operator(OP_TOGGLE_FEEDBACK, text="Thanks for your Feedback!", icon='HEART')
                 else:
-                    text = f"Leave Feedback ({bonus_label})" if bonus_label else "Leave Feedback"
-                    row.operator("banana.toggle_feedback", text=text, icon='GREASEPENCIL')
+                    text = "Leave Feedback (" + bonus_label + ")" if bonus_label else "Leave Feedback"
+                    row.operator(OP_TOGGLE_FEEDBACK, text=text, icon='GREASEPENCIL')
         
         # Status (only show during/after render)
         if props.status_text and props.status_text != "Ready":
@@ -474,7 +489,7 @@ class BANANA_PT_render_panel(Panel):
 
 # ─── Prompt Sub-panel ───
 
-class BANANA_PT_prompt(Panel):
+class BananaPTPrompt(Panel):
     """Prompt configuration"""
     bl_label = "Prompt"
     bl_idname = "BANANA_PT_prompt"
@@ -497,7 +512,7 @@ class BANANA_PT_prompt(Panel):
 
 # ─── Render Mode Sub-panel (like Sampling in Cycles) ───
 
-class BANANA_PT_render_mode(Panel):
+class BananaPTRenderMode(Panel):
     """Render mode and resolution settings"""
     bl_label = "Render Mode"
     bl_idname = "BANANA_PT_render_mode"
@@ -529,13 +544,13 @@ class BANANA_PT_render_mode(Panel):
             row.label(text="Nano Banana supports 1K only", icon='ERROR')
         
         # Show auto-detected dimensions
-        width, height = get_render_dimensions_from_scene(context)
+        _, _ = get_render_dimensions_from_scene(context)
         
 
 
 # ─── Mist Settings Sub-panel ───
 
-class BANANA_PT_mist(Panel):
+class BananaPTMist(Panel):
     """Mist pass settings for depth rendering"""
     bl_label = "Mist Pass"
     bl_idname = "BANANA_PT_mist"
@@ -569,7 +584,7 @@ class BANANA_PT_mist(Panel):
 
 # ─── Style Reference Sub-panel ───
 
-class BANANA_PT_style_reference(Panel):
+class BananaPTStyleReference(Panel):
     """Style reference for AI rendering"""
     bl_label = "Style Reference"
     bl_idname = "BANANA_PT_style_reference"
@@ -610,7 +625,7 @@ class BANANA_PT_style_reference(Panel):
 
 # ─── Render Gallery Sub-panel ───
 
-class BANANA_PT_history_panel(Panel):
+class BananaPTHistoryPanel(Panel):
     """Visual gallery render history panel"""
     bl_label = "Render Gallery" 
     bl_idname = "BANANA_PT_history_panel"
@@ -636,31 +651,39 @@ class BANANA_PT_history_panel(Panel):
         
         layout.label(text=f"{len(props.render_history)} renders", icon='IMAGE_DATA')
         
-        # Gallery — newest first
+        # Gallery — newest first, giant thumbnails
+        from . import history_previews
         for i, item in enumerate(reversed(props.render_history)):
             actual_index = len(props.render_history) - 1 - i
             render_number = len(props.render_history) - i
             
             box = layout.box()
             
-            # Header row: number + timestamp
-            row = box.row()
-            row.scale_y = 0.8
-            row.label(text=f"#{render_number} • {item.timestamp}", icon='TIME')
+            # Header
+            header = box.row()
+            header.label(text=f"#{render_number} \u2022 {item.timestamp}", icon='TIME')
             
-            # Buttons row
-            btn_row = box.row(align=True)
-            view_btn = btn_row.operator("gemini.load_history", text="View", icon='ZOOM_IN')
-            view_btn.history_index = actual_index
-            
-            gear_btn = btn_row.operator("gemini.history_context_menu", text="", icon='DOWNARROW_HLT')
-            gear_btn.history_index = actual_index
+            # Giant thumbnail using template_icon (maintains aspect ratio, fills width)
+            icon_id = history_previews.get_preview_icon_id_safe(item.filepath, item.image_name)
+            if icon_id:
+                row = box.row()
+                row.template_icon(icon_value=icon_id, scale=8.0)
+            else:
+                col = box.column(align=True)
+                col.scale_y = 3.0
+                col.label(text="Loading Preview...", icon='IMAGE_DATA')
             
             # Prompt preview
             prompt_preview = item.prompt[:60] + "..." if len(item.prompt) > 60 else item.prompt
-            row = box.row()
-            row.scale_y = 0.7
-            row.label(text=prompt_preview, icon='TEXT')
+            box.label(text=prompt_preview, icon='TEXT')
+            
+            # Actions row
+            actions = box.row(align=True)
+            view_btn = actions.operator("gemini.load_history", text="Open in Editor", icon='ZOOM_IN')
+            view_btn.history_index = actual_index
+            
+            gear_btn = actions.operator("gemini.history_context_menu", text="", icon='DOWNARROW_HLT')
+            gear_btn.history_index = actual_index
 
 
 
@@ -838,7 +861,7 @@ def get_scene_aspect_ratio_string(context) -> str:
 
 # ─── AI Texturing N-Panel (3D Viewport) ───────────────────────────
 
-class BANANA_PT_texturing_npanel(Panel):
+class BananaPTTexturingNpanel(Panel):
     """AI Texturing panel — appears in the 3D Viewport sidebar (N-key)"""
     bl_label = "Nanode AI Texturing (Beta)"
     bl_idname = "BANANA_PT_texturing_npanel"
@@ -922,11 +945,8 @@ class BANANA_PT_texturing_npanel(Panel):
         if props.last_generation_id > 0 and not props.last_generation_rated:
             rate_box = layout.box()
             rate_box.label(text="Rate this result:", icon='QUESTION')
-            row = rate_box.row(align=True)
-            op_like = row.operator("banana.rate_generation", text="👍 Good")
-            op_like.rating = "like"
-            op_dislike = row.operator("banana.rate_generation", text="👎 Bad")
-            op_dislike.rating = "dislike"
+            rate_box.row(align=True).operator(OP_RATE_GEN, text="👍 Good").rating = "like"
+            rate_box.row(align=True).operator(OP_RATE_GEN, text="👎 Bad").rating = "dislike"
 
         # ── Feedback ──
         if hasattr(props, 'show_feedback'):
@@ -943,9 +963,9 @@ class BANANA_PT_texturing_npanel(Panel):
             else:
                 row = layout.row()
                 if props.has_submitted_feedback:
-                    row.operator("banana.toggle_feedback", text="Thanks for your Feedback!", icon='CHECKMARK')
+                    row.operator(OP_TOGGLE_FEEDBACK, text="Thanks for your Feedback!", icon='CHECKMARK')
                 else:
-                    row.operator("banana.toggle_feedback", text="Leave Feedback (+50 Credits)", icon='OUTLINER_OB_LIGHT')
+                    row.operator(OP_TOGGLE_FEEDBACK, text="Leave Feedback (+50 Credits)", icon='OUTLINER_OB_LIGHT')
 
         layout.separator()
 

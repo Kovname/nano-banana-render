@@ -7,12 +7,11 @@ import tempfile
 import ssl
 import shutil
 
-# Bypass SSL verify issues on some OS for basic update checks
+# Basic SSL context with secure defaults
 _ssl_ctx = ssl.create_default_context()
-_ssl_ctx.check_hostname = False
-_ssl_ctx.verify_mode = ssl.CERT_NONE
+_ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
-class NANODE_OT_install_update(bpy.types.Operator):
+class NanodeOTInstallUpdate(bpy.types.Operator):
     bl_idname = "nanode.install_update"
     bl_label = "Installing Update..."
 
@@ -34,7 +33,7 @@ class NANODE_OT_install_update(bpy.types.Operator):
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 # Analyze zip structure
                 paths = [m.filename.replace('\\', '/') for m in zip_ref.infolist()]
-                root_folders = set(p.split('/')[0] for p in paths if p)
+                root_folders = {p.split('/')[0] for p in paths if p}
                 strip_root = len(root_folders) == 1
                 
                 for member in zip_ref.infolist():
@@ -80,7 +79,7 @@ class NANODE_OT_install_update(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class NANODE_OT_update_dialog(bpy.types.Operator):
+class NanodeOTUpdateDialog(bpy.types.Operator):
     bl_idname = "nanode.update_dialog"
     bl_label = "Update Nanode add-on"
     
@@ -135,9 +134,7 @@ def check_updates_in_background(local_version_tuple, local_build_number=0):
                 
                 # Check if server version is newer OR same version with higher build number
                 needs_update = False
-                if srv_tuple > local_version_tuple:
-                    needs_update = True
-                elif srv_tuple == local_version_tuple and int(server_build) > int(local_build_number):
+                if srv_tuple > local_version_tuple or (srv_tuple == local_version_tuple and int(server_build) > int(local_build_number)):
                     needs_update = True
                 
                 if needs_update:
@@ -147,10 +144,19 @@ def check_updates_in_background(local_version_tuple, local_build_number=0):
                         display = f"{server_version} (build {server_build})"
                     import bpy
                     bpy.context.window_manager.nanode_update_version = display
-    except Exception as e:
+    except Exception:
         # Silently fail update checks
         pass
 
+
+def _get_active_3d_viewport(wm):
+    for window in wm.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                for region in area.regions:
+                    if region.type == 'WINDOW':
+                        return window, area, region
+    return None, None, None
 
 def update_poll_timer():
     """Polled periodically by Blender to show the UI dialog safely in the main thread."""
@@ -159,32 +165,24 @@ def update_poll_timer():
     version_str = getattr(wm, "nanode_update_version", "")
     
     # Wait until an update is found, but avoid showing if IGNORED
-    if version_str and version_str != "IGNORED":
-        # Find exactly where the user is looking
-        for window in wm.windows:
-            screen = window.screen
-            for area in screen.areas:
-                if area.type == 'VIEW_3D':
-                    for region in area.regions:
-                        if region.type == 'WINDOW':
-                            # Trigger dialog in 3D viewport context
-                            with bpy.context.temp_override(window=window, area=area, region=region):
-                                try:
-                                    bpy.ops.nanode.update_dialog('INVOKE_DEFAULT')
-                                    # Disarm timer returning None
-                                    return None
-                                except RuntimeError:
-                                    pass
-        # If no active 3D view yet, poll again
-        return 2.0
-    
-    # Keeping polling. Disarm after trying too many times?
-    # We will poll every 5 seconds until it updates.
-    return 5.0
+    if not version_str or version_str == "IGNORED":
+        return 5.0
+
+    window, area, region = _get_active_3d_viewport(wm)
+    if window and area and region:
+        with bpy.context.temp_override(window=window, area=area, region=region):
+            try:
+                bpy.ops.nanode.update_dialog('INVOKE_DEFAULT')
+                # Disarm timer returning None
+                return None
+            except RuntimeError:
+                pass
+        
+    return 2.0
 
 classes = (
-    NANODE_OT_install_update,
-    NANODE_OT_update_dialog,
+    NanodeOTInstallUpdate,
+    NanodeOTUpdateDialog,
 )
 
 def register():

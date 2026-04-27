@@ -20,12 +20,22 @@ except ImportError:
     import requests
 
 
+MIME_PNG = "image/png"
+
+
 def _calculate_aspect_ratio(w: int, h: int) -> str:
     """Calculate closest supported aspect ratio string."""
     ratio = w / h if h > 0 else 1.0
+    # Full table of common aspect ratios including portrait orientations
     ratios = {
-        "1:1": 1.0, "16:9": 16/9, "9:16": 9/16,
-        "4:3": 4/3, "3:2": 3/2,
+        "1:1": 1.0,
+        "16:9": 16/9, "9:16": 9/16,
+        "16:10": 16/10, "10:16": 10/16,
+        "4:3": 4/3, "3:4": 3/4,
+        "3:2": 3/2, "2:3": 2/3,
+        "5:4": 5/4, "4:5": 4/5,
+        "21:9": 21/9, "9:21": 9/21,
+        "2:1": 2/1, "1:2": 1/2,
     }
     return min(ratios.items(), key=lambda x: abs(x[1] - ratio))[0]
 
@@ -336,9 +346,9 @@ class GeminiAPI:
                     method="POST"
                 )
                 
-                with urllib_request.urlopen(req, timeout=30) as resp:
-                    pass
-            except Exception as e:
+                with urllib_request.urlopen(req, timeout=30) as response:
+                    response.read()
+            except Exception:
                 pass
 
         # Run quietly in background
@@ -376,37 +386,7 @@ class GeminiAPI:
             print(f"[GEMINI] Using resolution: {resolution_str}, aspect ratio: {aspect_ratio_str}")
             
             # Build API config
-            try:
-                config = types.GenerateContentConfig(
-                    temperature=0.8,
-                    candidate_count=1,
-                    response_modalities=['IMAGE'],
-                )
-                
-                # Try using ImageConfig if available
-                if hasattr(types, 'ImageConfig'):
-                    img_conf = types.ImageConfig(image_size=resolution_str, aspect_ratio=aspect_ratio_str)
-                    config = types.GenerateContentConfig(
-                        temperature=0.8,
-                        candidate_count=1,
-                        response_modalities=['IMAGE'],
-                        image_config=img_conf
-                    )
-                else:
-                    # Fallback to dictionary config
-                    config = {
-                        "temperature": 0.8,
-                        "candidateCount": 1,
-                        "responseModalities": ["IMAGE"],
-                        "imageConfig": {"imageSize": resolution_str, "aspectRatio": aspect_ratio_str}
-                    }
-            except Exception as e:
-                print(f"[GEMINI] Config setup failed: {e}")
-                config = types.GenerateContentConfig(
-                    temperature=0.8,
-                    candidate_count=1,
-                    response_modalities=['IMAGE']
-                )
+            config = self._build_sdk_config(resolution_str, aspect_ratio_str, temperature=0.8)
             
             response = self.client.models.generate_content(
                 model=self.model,
@@ -416,40 +396,7 @@ class GeminiAPI:
             
             print("✅ [GEMINI] Response received, processing parts...")
             
-            # Process response parts
-            if not response.candidates or not response.candidates[0].content.parts:
-                print("❌ [GEMINI] No content parts in response")
-                raise GeminiAPIError("No image generated. The model may have rejected the request.")
-            
-            parts = response.candidates[0].content.parts
-            print(f"🧩 [GEMINI] Found {len(parts)} parts in response")
-            
-            # Find image part
-            for i, part in enumerate(parts):
-                print(f"🔍 [GEMINI] Part {i}: text={part.text is not None}, inline_data={part.inline_data is not None}")
-                
-                if part.text is not None:
-                    print(f"📝 [GEMINI] Text part: {part.text[:100]}...")
-                
-                if part.inline_data is not None:
-                    print("🖼️ [GEMINI] Found inline_data - extracting image...")
-                    
-                    # Convert to PIL Image and then to bytes
-                    image = Image.open(BytesIO(part.inline_data.data))
-                    
-                    if image.mode not in ('RGB', 'RGBA'):
-                        image = image.convert('RGB')
-                    
-                    img_byte_arr = BytesIO()
-                    image.save(img_byte_arr, format='PNG')
-                    return img_byte_arr.getvalue(), "image/png"
-            
-            # Fallback to placeholder if no image found
-            text_parts = [part.text for part in parts if part.text is not None]
-            if text_parts:
-                return self._create_placeholder_image(f"Model response: {' '.join(text_parts)}")
-            else:
-                raise GeminiAPIError("No image or text found in API response")
+            return self._extract_sdk_response_image(response)
                 
         except Exception as e:
             if isinstance(e, GeminiAPIError):
@@ -483,10 +430,10 @@ class GeminiAPI:
             
             # Build parts: prompt -> depth_image -> reference_image
             parts = [{"text": full_prompt}]
-            parts.append({"inline_data": {"mime_type": "image/png", "data": image_base64}})
+            parts.append({"inline_data": {"mime_type": MIME_PNG, "data": image_base64}})
             
             if reference_base64:
-                parts.append({"inline_data": {"mime_type": "image/png", "data": reference_base64}})
+                parts.append({"inline_data": {"mime_type": MIME_PNG, "data": reference_base64}})
             
             resolution_str = _determine_resolution(width, height)
             
@@ -534,20 +481,17 @@ class GeminiAPI:
             
             # Find and extract image data
             for part in parts:
-                inline_data_key = 'inline_data' if 'inline_data' in part else 'inlineData' if 'inlineData' in part else None
-                
-                if inline_data_key:
-                    inline_data = part[inline_data_key]
-                    data_key = 'data' if 'data' in inline_data else 'bytes' if 'bytes' in inline_data else None
-                    
-                    if data_key and inline_data[data_key]:
+                inline_data = part.get('inline_data') or part.get('inlineData')
+                if inline_data:
+                    data = inline_data.get('data') or inline_data.get('bytes')
+                    if data:
                         mime_type = inline_data.get('mime_type', inline_data.get('mimeType', 'image/jpeg'))
-                        return base64.b64decode(inline_data[data_key]), mime_type
+                        return base64.b64decode(data), mime_type
             
             # Fallback to placeholder
             text_parts = [part.get('text', '') for part in parts if 'text' in part]
             if text_parts:
-                return self._create_placeholder_image(f"Model response: {' '.join(text_parts)}")
+                return self._create_placeholder_image()
             
             raise GeminiAPIError("No image data found in API response")
             
@@ -560,11 +504,83 @@ class GeminiAPI:
                 raise
             raise GeminiAPIError(f"Unexpected error: {str(e)}")
     
-    def _create_placeholder_image(self, text_response: str) -> Tuple[bytes, str]:
+
+    def _build_sdk_config(self, resolution_str: str, aspect_ratio_str: str, temperature: float = 0.8):
+        """Helper to build API config to reduce Cognitive Complexity"""
+        try:
+            if hasattr(types, 'ImageConfig'):
+                img_conf = types.ImageConfig(image_size=resolution_str, aspect_ratio=aspect_ratio_str)
+                return types.GenerateContentConfig(
+                    temperature=temperature,
+                    candidate_count=1,
+                    response_modalities=['IMAGE'],
+                    image_config=img_conf
+                )
+            else:
+                return {
+                    "temperature": temperature,
+                    "candidateCount": 1,
+                    "responseModalities": ["IMAGE"],
+                    "imageConfig": {"imageSize": resolution_str, "aspectRatio": aspect_ratio_str}
+                }
+        except Exception as e:
+            print(f"[GEMINI] Config setup failed: {e}")
+            return types.GenerateContentConfig(
+                temperature=temperature,
+                candidate_count=1,
+                response_modalities=['IMAGE']
+            )
+
+    def _extract_sdk_response_image(self, response) -> Tuple[bytes, str]:
+        """Helper to extract image from SDK response to reduce CC"""
+        if not response.candidates or not response.candidates[0].content.parts:
+            print("❌ [GEMINI] No content parts in response")
+            raise GeminiAPIError("No image generated. The model may have rejected the request.")
+        
+        parts = response.candidates[0].content.parts
+        for part in parts:
+            if part.inline_data is not None:
+                image = Image.open(BytesIO(part.inline_data.data))
+                if image.mode not in ('RGB', 'RGBA'):
+                    image = image.convert('RGB')
+                img_byte_arr = BytesIO()
+                image.save(img_byte_arr, format='PNG')
+                return img_byte_arr.getvalue(), MIME_PNG
+        
+        # Fallback
+        text_parts = [part.text for part in parts if part.text is not None]
+        if text_parts:
+            return self._create_placeholder_image()
+        raise GeminiAPIError("No image or text found in API response")
+
+    def _extract_rest_response_image(self, result: dict) -> Tuple[bytes, str]:
+        """Helper to extract image from REST response to reduce CC"""
+        if 'candidates' not in result or not result['candidates']:
+            raise GeminiAPIError("No image generated.")
+        
+        candidate = result['candidates'][0]
+        if 'content' not in candidate:
+            raise GeminiAPIError("Invalid response format.")
+        
+        parts = candidate['content']['parts']
+        for part in parts:
+            inline_data = part.get('inline_data') or part.get('inlineData')
+            if inline_data:
+                data = inline_data.get('data') or inline_data.get('bytes')
+                if data:
+                    mime_type = inline_data.get('mime_type', inline_data.get('mimeType', MIME_PNG))
+                    return base64.b64decode(data), mime_type
+        
+        text_parts = [part.get('text', '') for part in parts if 'text' in part]
+        if text_parts:
+            return self._create_placeholder_image()
+        raise GeminiAPIError("No image data found in API response")
+
+    def _create_placeholder_image(self) -> Tuple[bytes, str]:
         """Create a placeholder image when no image is returned."""
         try:
             png_data = self._create_simple_png(100, 100, (0, 100, 200))
-            return png_data, "image/png"
+            return png_data, MIME_PNG
         except Exception as e:
             raise GeminiAPIError(f"Failed to create placeholder: {str(e)}")
     
@@ -584,9 +600,9 @@ class GeminiAPI:
         # Image data
         raw_data = b''
         r, g, b = color
-        for y in range(height):
+        for _ in range(height):
             raw_data += b'\x00'  # No filter
-            for x in range(width):
+            for _ in range(width):
                 raw_data += struct.pack('BBB', r, g, b)  # RGB pixel
         
         # IDAT chunk
@@ -606,7 +622,8 @@ class GeminiAPI:
                    mask_path: str = None,
                    reference_image_path: str = None,
                    width: int = 0,
-                   height: int = 0) -> Tuple[bytes, str]:
+                   height: int = 0,
+                   is_smart_points: bool = False) -> Tuple[bytes, str]:
         """
         Edit existing image with AI based on prompt and optional mask
         
@@ -622,12 +639,17 @@ class GeminiAPI:
         try:
             print(f"[GEMINI] Starting image edit with model: {self.model}")
             
-            # Build edit prompt
-            full_prompt = self._build_edit_prompt(
-                edit_prompt, 
-                has_mask=bool(mask_path),
-                has_reference=bool(reference_image_path)
-            )
+            if is_smart_points:
+                # Smart points prompt is already fully built — use directly
+                full_prompt = edit_prompt
+                print("[GEMINI] Smart Points mode: using pre-built prompt (no wrapper)")
+            else:
+                # Build edit prompt with appropriate schema wrapper
+                full_prompt = self._build_edit_prompt(
+                    edit_prompt, 
+                    has_mask=bool(mask_path),
+                    has_reference=bool(reference_image_path)
+                )
             
             if self.use_sdk:
                 return self._edit_with_sdk(image_path, full_prompt, mask_path, reference_image_path, width, height)
@@ -953,38 +975,7 @@ class GeminiAPI:
             
             print(f"[GEMINI] Edit aspect ratio: {aspect_ratio_str}")
             
-            try:
-                # Try to use the structure that worked for generation
-                if hasattr(types, 'ImageConfig'):
-                    img_conf = types.ImageConfig(
-                        image_size=resolution_str,
-                        aspect_ratio=aspect_ratio_str
-                    )
-                    config = types.GenerateContentConfig(
-                        temperature=0.7,
-                        candidate_count=1,
-                        response_modalities=['IMAGE'],
-                        image_config=img_conf
-                    )
-                else:
-                    # Dictionary fallback
-                    config = {
-                        "temperature": 0.7,
-                        "candidateCount": 1,
-                        "responseModalities": ["IMAGE"],
-                        "imageConfig": {
-                            "imageSize": resolution_str,
-                            "aspectRatio": aspect_ratio_str
-                        }
-                    }
-                    print("[GEMINI] Using dictionary config for edit")
-            except Exception as e:
-                print(f"[GEMINI] Edit config setup failed: {e}")
-                config = types.GenerateContentConfig(
-                    temperature=0.7,
-                    candidate_count=1,
-                    response_modalities=['IMAGE']
-                )
+            config = self._build_sdk_config(resolution_str, aspect_ratio_str, temperature=0.7)
             
             # Make API call
             response = self.client.models.generate_content(
@@ -995,31 +986,7 @@ class GeminiAPI:
             
             print("[GEMINI] Edit response received")
             
-            # Process response
-            if not response.candidates or not response.candidates[0].content.parts:
-                raise GeminiAPIError("No content in edit response")
-            
-            parts = response.candidates[0].content.parts
-            
-            # Find image part
-            for part in parts:
-                if part.inline_data is not None:
-                    image = Image.open(BytesIO(part.inline_data.data))
-                    
-                    # Ensure RGB
-                    if image.mode not in ('RGB', 'RGBA'):
-                        print(f"[GEMINI] Converting {image.mode} to RGB")
-                        image = image.convert('RGB')
-                    
-                    # Convert to PNG (standard sRGB)
-                    img_byte_arr = BytesIO()
-                    image.save(img_byte_arr, format='PNG')
-                    image_data = img_byte_arr.getvalue()
-                    
-                    print(f"[GEMINI] Edited image: {len(image_data)} bytes")
-                    return image_data, "image/png"
-            
-            raise GeminiAPIError("No image found in edit response")
+            return self._extract_sdk_response_image(response)
             
         except Exception as e:
             if isinstance(e, GeminiAPIError):
@@ -1048,7 +1015,7 @@ class GeminiAPI:
                     reference_base64 = base64.b64encode(f.read()).decode('utf-8')
                 parts.append({
                     "inline_data": {
-                        "mime_type": "image/png",
+                        "mime_type": MIME_PNG,
                         "data": reference_base64
                     }
                 })
@@ -1057,7 +1024,7 @@ class GeminiAPI:
             # Add original image SECOND
             parts.append({
                 "inline_data": {
-                    "mime_type": "image/png",
+                    "mime_type": MIME_PNG,
                     "data": image_base64
                 }
             })
@@ -1069,7 +1036,7 @@ class GeminiAPI:
                     mask_base64 = base64.b64encode(f.read()).decode('utf-8')
                 parts.append({
                     "inline_data": {
-                        "mime_type": "image/png",
+                        "mime_type": MIME_PNG,
                         "data": mask_base64
                     }
                 })
@@ -1102,7 +1069,7 @@ class GeminiAPI:
                             elif w >= 2048 or h >= 2048:
                                 resolution_str = "2K"
                             
-                            aspect_ratio_str = calculate_aspect_ratio_rest(w, h)
+                            aspect_ratio_str = _calculate_aspect_ratio(w, h)
                             print(f"[GEMINI] REST Edit Resolution (Auto): {w}x{h} -> {resolution_str}, Aspect: {aspect_ratio_str}")
                 except Exception as e:
                     print(f"[GEMINI] Could not detect image size for REST: {e}")
@@ -1137,15 +1104,23 @@ class GeminiAPI:
             
             # Find image part
             for part in parts:
-                inline_data_key = 'inline_data' if 'inline_data' in part else 'inlineData' if 'inlineData' in part else None
+                inline_data_key = None
+                if 'inline_data' in part:
+                    inline_data_key = 'inline_data'
+                elif 'inlineData' in part:
+                    inline_data_key = 'inlineData'
                 
                 if inline_data_key:
                     inline_data = part[inline_data_key]
-                    data_key = 'data' if 'data' in inline_data else 'bytes' if 'bytes' in inline_data else None
+                    data_key = None
+                    if 'data' in inline_data:
+                        data_key = 'data'
+                    elif 'bytes' in inline_data:
+                        data_key = 'bytes'
                     
                     if data_key and inline_data[data_key]:
                         image_data = base64.b64decode(inline_data[data_key])
-                        mime_type = inline_data.get('mime_type', inline_data.get('mimeType', 'image/png'))
+                        mime_type = inline_data.get('mime_type', inline_data.get('mimeType', MIME_PNG))
                         print(f"[GEMINI] Edited image: {len(image_data)} bytes, format: {mime_type}")
                         
                         # Verify image is not corrupted

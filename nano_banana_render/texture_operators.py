@@ -24,9 +24,7 @@ from .threading_utils import execute_in_main_thread
 from .render_engine import MODEL_MAP
 
 
-# ──────────────────────────────────────────────────────────────────
-#  Helpers
-# ──────────────────────────────────────────────────────────────────
+# Helpers
 
 COST_GRID = {
     'flash': {'1024': 10, '2048': 15, '4096': 60},
@@ -89,7 +87,6 @@ def _call_api_depth(prompt: str, model_name: str, depth_image_path: str,
 
 def _call_api_enhance(prompt: str, model_name: str,
                       color_path: str, depth_path: str,
-                      ref_path: str = None,
                       width: int = 1024, height: int = 1024):
     """Send a COLOR render + DEPTH MAP for enhancement.
 
@@ -126,7 +123,7 @@ def _call_api_enhance(prompt: str, model_name: str,
         return image_data, generation_id, new_balance
 
 
-def _collect_cameras(props) -> list:
+def _collect_cameras() -> list:
     """Gather existing temp cameras by scanning scene objects."""
     prefix = pipe.TEMP_PREFIX + "cam_"
     cameras = []
@@ -211,7 +208,7 @@ def _wait_for(box, label: str, timeout: int = 300):
 #  Operator: Init Cameras
 # ──────────────────────────────────────────────────────────────────
 
-class BANANA_OT_init_tex_cameras(Operator):
+class BananaOTInitTexCameras(Operator):
     """Create orthographic cameras around the selected mesh"""
     bl_idname = "banana.init_tex_cameras"
     bl_label = "Init Cameras"
@@ -249,7 +246,7 @@ class BANANA_OT_init_tex_cameras(Operator):
 #  Operator: Update Cameras (distance / ortho_scale)
 # ──────────────────────────────────────────────────────────────────
 
-class BANANA_OT_update_tex_cameras(Operator):
+class BananaOTUpdateTexCameras(Operator):
     """Update camera positions and ortho scale"""
     bl_idname = "banana.update_tex_cameras"
     bl_label = "Update Cameras"
@@ -281,7 +278,7 @@ class BANANA_OT_update_tex_cameras(Operator):
 #  Operator: Preview Camera
 # ──────────────────────────────────────────────────────────────────
 
-class BANANA_OT_preview_tex_camera(Operator):
+class BananaOTPreviewTexCamera(Operator):
     """Look through a specific pipeline camera"""
     bl_idname = "banana.preview_tex_camera"
     bl_label = "Preview Camera"
@@ -303,7 +300,7 @@ class BANANA_OT_preview_tex_camera(Operator):
 #  Operator: Draft Generation (mist collage → AI → project)
 # ──────────────────────────────────────────────────────────────────
 
-class BANANA_OT_texture_draft(Operator):
+class BananaOTTextureDraft(Operator):
     """Generate a draft texture from mist/depth collage"""
     bl_idname = "banana.texture_draft"
     bl_label = "Generate Draft"
@@ -345,7 +342,7 @@ class BANANA_OT_texture_draft(Operator):
         props.tex_is_processing = True
         props.tex_status = "Starting draft generation..."
 
-        cameras = _collect_cameras(props)
+        cameras = _collect_cameras()
         if not cameras:
             props.tex_is_processing = False
             self.report({'ERROR'}, "No cameras. Click 'Init Cameras' first.")
@@ -398,7 +395,6 @@ class BANANA_OT_texture_draft(Operator):
                         if render_mode == 'MIST':
                             pipe.setup_mist_render(
                                 scene, resolution,
-                                mist_start, mist_depth, mist_falloff,
                             )
                             paths = pipe.render_all_views(
                                 scene, cameras, tmp_dir, "mist"
@@ -450,15 +446,14 @@ class BANANA_OT_texture_draft(Operator):
             ref_instruction = ""
             if reference_path:
                 ref_instruction = (
-                    f"6. A STYLE REFERENCE image is attached separately. "
-                    f"Use it ONLY as art direction — extract the colour "
-                    f"palette, material finish, and artistic feel from it. "
-                    f"Do NOT copy any shapes, objects, or content from the "
-                    f"reference — it is purely for visual style guidance.\n"
+                    "6. A STYLE REFERENCE image is attached separately. "
+                    "Use it ONLY as art direction — extract the colour "
+                    "palette, material finish, and artistic feel from it. "
+                    "Do NOT copy any shapes, objects, or content from the "
+                    "reference — it is purely for visual style guidance.\n"
                 )
 
             input_type = "depth map (mist/Z-pass)" if render_mode == 'MIST' else "flat untextured base"
-            input_term = "depth map" if render_mode == 'MIST' else "base image"
 
             # Build a prompt that tells the AI exactly what it's looking at
             full_prompt = (
@@ -543,7 +538,7 @@ class BANANA_OT_texture_draft(Operator):
                     if not obj:
                         raise RuntimeError(f"Object '{obj_name}' gone")
 
-                    cams = _collect_cameras(scene.gemini_render)
+                    cams = _collect_cameras()
                     pipe.project_textures(obj, cams, tiles)
 
                     scene.gemini_render.tex_has_draft = True
@@ -571,7 +566,7 @@ class BANANA_OT_texture_draft(Operator):
 #  Operator: Enhance (per-view with depth)
 # ──────────────────────────────────────────────────────────────────
 
-class BANANA_OT_texture_enhance(Operator):
+class BananaOTTextureEnhance(Operator):
     """Enhance each camera view individually with depth guidance"""
     bl_idname = "banana.texture_enhance"
     bl_label = "Enhance Details"
@@ -597,7 +592,7 @@ class BANANA_OT_texture_enhance(Operator):
     def draw(self, context):
         layout = self.layout
         props = context.scene.gemini_render
-        n = len(_collect_cameras(props))
+        n = len(_collect_cameras())
         cost = _get_cost(props)
         total = n * cost
 
@@ -618,7 +613,7 @@ class BANANA_OT_texture_enhance(Operator):
         obj = context.active_object
         props = scene.gemini_render
 
-        n = len(_collect_cameras(props))
+        n = len(_collect_cameras())
         total = _get_cost(props) * n
 
         if props.beta_balance >= 0 and props.beta_balance < total:
@@ -631,7 +626,7 @@ class BANANA_OT_texture_enhance(Operator):
         props.tex_is_processing = True
         props.tex_status = "Starting enhancement..."
 
-        cameras = _collect_cameras(props)
+        cameras = _collect_cameras()
         if not cameras:
             props.tex_is_processing = False
             self.report({'ERROR'}, "No cameras found")
@@ -690,7 +685,6 @@ class BANANA_OT_texture_enhance(Operator):
                         if render_mode == 'MIST':
                             pipe.setup_mist_render(
                                 scene, resolution,
-                                mist_start, mist_depth, mist_falloff,
                             )
                             for cam_info in cameras:
                                 d_path = os.path.join(
@@ -757,9 +751,9 @@ class BANANA_OT_texture_enhance(Operator):
                 ref_instruction = ""
                 if reference_path:
                     ref_instruction = (
-                        f"- A STYLE REFERENCE image is attached. Use it ONLY "
-                        f"for colour palette and artistic feel — do NOT copy "
-                        f"any shapes or objects from it\n"
+                        "- A STYLE REFERENCE image is attached. Use it ONLY "
+                        "for colour palette and artistic feel — do NOT copy "
+                        "any shapes or objects from it\n"
                     )
 
                 if render_mode == 'MIST':
@@ -819,7 +813,6 @@ class BANANA_OT_texture_enhance(Operator):
                     model_name=model_name,
                     color_path=color_path,
                     depth_path=paths.get('depth'),
-                    ref_path=reference_path,
                     width=resolution,
                     height=resolution,
                 )
@@ -867,7 +860,7 @@ class BANANA_OT_texture_enhance(Operator):
                     if not obj:
                         raise RuntimeError(f"Object '{obj_name}' gone")
 
-                    cams = _collect_cameras(scene.gemini_render)
+                    cams = _collect_cameras()
 
                     # Mask enhanced textures with depth maps
                     depth_order = [
@@ -904,7 +897,7 @@ class BANANA_OT_texture_enhance(Operator):
 #  Operator: Cleanup
 # ──────────────────────────────────────────────────────────────────
 
-class BANANA_OT_cleanup_tex(Operator):
+class BananaOTCleanupTex(Operator):
     """Remove all temporary texturing data"""
     bl_idname = "banana.cleanup_tex"
     bl_label = "Cleanup Texturing"
@@ -924,7 +917,7 @@ class BANANA_OT_cleanup_tex(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_clear_tex_reference(Operator):
+class BananaOTClearTexReference(Operator):
     """Clear the selected style reference image"""
     bl_idname = "banana.clear_tex_reference"
     bl_label = "Clear Reference"
@@ -935,7 +928,7 @@ class BANANA_OT_clear_tex_reference(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_load_tex_reference(Operator):
+class BananaOTLoadTexReference(Operator):
     """Load a style reference image from disk"""
     bl_idname = "banana.load_tex_reference"
     bl_label = "Load Style Reference"
@@ -962,12 +955,12 @@ class BANANA_OT_load_tex_reference(Operator):
 
 # ── Registration list ──
 texture_operator_classes = (
-    BANANA_OT_init_tex_cameras,
-    BANANA_OT_update_tex_cameras,
-    BANANA_OT_preview_tex_camera,
-    BANANA_OT_texture_draft,
-    BANANA_OT_texture_enhance,
-    BANANA_OT_cleanup_tex,
-    BANANA_OT_clear_tex_reference,
-    BANANA_OT_load_tex_reference,
+    BananaOTInitTexCameras,
+    BananaOTUpdateTexCameras,
+    BananaOTPreviewTexCamera,
+    BananaOTTextureDraft,
+    BananaOTTextureEnhance,
+    BananaOTCleanupTex,
+    BananaOTClearTexReference,
+    BananaOTLoadTexReference,
 )

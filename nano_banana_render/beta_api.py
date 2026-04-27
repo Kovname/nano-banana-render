@@ -69,7 +69,7 @@ def _post(endpoint: str, data: dict, timeout: int = 120) -> dict:
         try:
             body = json.loads(e.read().decode("utf-8"))
             detail = body.get("detail", str(e))
-        except (ValueError, UnicodeDecodeError):
+        except ValueError:
             detail = str(e)
         raise BetaAPIError(e.code, detail)
     except URLError as e:
@@ -90,7 +90,7 @@ def _get(endpoint: str, timeout: int = 10) -> dict:
         try:
             body = json.loads(e.read().decode("utf-8"))
             detail = body.get("detail", str(e))
-        except (ValueError, UnicodeDecodeError):
+        except ValueError:
             detail = str(e)
         raise BetaAPIError(e.code, detail)
     except URLError as e:
@@ -119,6 +119,7 @@ def generate(
     width: int = 1024,
     height: int = 1024,
     user_prompt: Optional[str] = None,
+    is_smart_points: bool = False,
 ) -> Tuple[bytes, int, int]:
     """
     Generate an AI image via the beta server.
@@ -189,8 +190,10 @@ def generate(
         "width": width,
         "height": height,
         "hwid": hwid,
+        "eu_format": _get_eu_format(),
         "addon_version": addon_version,
         "blender_version": blender_version,
+        "is_smart_points": is_smart_points,
     }
 
     print(f"[BETA API] Sending generation request ({gen_type}, model={model})")

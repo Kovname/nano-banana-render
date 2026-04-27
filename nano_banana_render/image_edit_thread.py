@@ -13,24 +13,28 @@ from typing import Optional
 class ImageEditThread(threading.Thread):
     """Background thread for AI image editing"""
     
-    def __init__(self, image_path: str, edit_prompt: str, 
-                 mask_path: Optional[str], reference_path: Optional[str],
+    def __init__(self, image_path: str, user_prompt: str, api_prompt: str, 
                  api_key: str, context, original_image_name: str, temp_dir: str,
-                 resolution: str = 'AUTO', original_size: tuple = (1024, 1024),
-                 model_name: str = None):
+                 mask_path: Optional[str] = None, reference_path: Optional[str] = None,
+                 smart_points_json: str = "",
+                 size_params: tuple = ('AUTO', (1024, 1024)),
+                 model_name: str = None,
+                 is_smart_points: bool = False):
         super().__init__(daemon=True)
         
         self.image_path = image_path
-        self.edit_prompt = edit_prompt
+        self.user_prompt = user_prompt
+        self.api_prompt = api_prompt
         self.mask_path = mask_path
         self.reference_path = reference_path
         self.api_key = api_key
         self.context = context
         self.original_image_name = original_image_name
         self.temp_dir = temp_dir
-        self.resolution = resolution
-        self.original_size = original_size
+        self.smart_points_json = smart_points_json
+        self.resolution, self.original_size = size_params
         self.model_name = model_name
+        self.is_smart_points = is_smart_points
         
         self.result_image_data = None
         self.error_message = None
@@ -83,15 +87,16 @@ class ImageEditThread(threading.Thread):
             if self.api_key.startswith("AIza"):
                 # ─── Direct Google API Mode ───
                 from .gemini_api import GeminiAPI
-                print(f"[NANO BANANA] Calling Google API directly for EDIT...")
+                print("[NANO BANANA] Calling Google API directly for EDIT...")
                 gemini = GeminiAPI(api_key=self.api_key, model=self.model_name)
                 image_data, _ = gemini.edit_image(
                     image_path=self.image_path,
-                    edit_prompt=self.edit_prompt,
+                    edit_prompt=self.api_prompt,
                     mask_path=self.mask_path,
                     reference_image_path=self.reference_path,
                     width=width,
-                    height=height
+                    height=height,
+                    is_smart_points=self.is_smart_points
                 )
                 generation_id = 0
                 new_balance = -1
@@ -100,19 +105,24 @@ class ImageEditThread(threading.Thread):
                 from . import beta_api
                 from .gemini_api import GeminiAPI
                 
-                # Build prompt client-side (same logic as direct mode)
-                prompt_builder = GeminiAPI.__new__(GeminiAPI)
-                full_prompt = prompt_builder._build_edit_prompt(
-                    self.edit_prompt,
-                    has_mask=bool(self.mask_path),
-                    has_reference=bool(self.reference_path)
-                )
+                if self.is_smart_points:
+                    # Smart points prompt is already fully built — use as-is
+                    full_prompt = self.api_prompt
+                else:
+                    # Build prompt client-side (same logic as direct mode)
+                    prompt_builder = GeminiAPI.__new__(GeminiAPI)
+                    full_prompt = prompt_builder._build_edit_prompt(
+                        self.api_prompt,
+                        has_mask=bool(self.mask_path),
+                        has_reference=bool(self.reference_path)
+                    )
                 
-                print(f"[NANO BANANA] Calling beta_api.generate for INPAINT...")
+                print("[NANO BANANA] Calling beta_api.generate for INPAINT...")
                 print(f"  - Image: {self.image_path}")
-                print(f"  - Prompt: {self.edit_prompt[:100]}...")
+                print(f"  - Prompt: {full_prompt[:200]}...")
                 print(f"  - Mask: {self.mask_path}")
                 print(f"  - Reference: {self.reference_path}")
+                print(f"  - Smart Points: {self.is_smart_points}")
                 
                 image_data, generation_id, new_balance = beta_api.generate(
                     prompt=full_prompt,
@@ -123,32 +133,62 @@ class ImageEditThread(threading.Thread):
                     gen_type="inpaint",
                     width=width,
                     height=height,
+                    user_prompt=self.user_prompt,
+                    is_smart_points=self.is_smart_points,
                 )
             
             print(f"[NANO BANANA] Edit completed: {len(image_data)} bytes")
             
-            # Post-process: Enforce correct aspect ratio
-            # Gemini strictly outputs standard aspect ratios (e.g. 16:9). If our input was 16:10,
-            # it might stretch the result. Resizing it exactly back to target width/height fixes this.
+            # Post-process: Enforce correct dimensions WITHOUT stretching
+            # Gemini may return a different aspect ratio (e.g. 16:9 when input was 16:10).
+            # Instead of stretching (which distorts), we:
+            #   1. Crop the AI result to match the original aspect ratio (center crop)
+            #   2. Then resize to the exact target dimensions
+            # This prevents compounding vertical/horizontal stretch across iterations.
             try:
                 from PIL import Image
                 import io
                 
                 with Image.open(io.BytesIO(image_data)) as result_img:
-                    if result_img.size != (width, height):
-                        print(f"[NANO BANANA] Fixing aspect ratio: Resizing result from {result_img.size} to requested {width}x{height}")
-                        # Use high-quality resampling
+                    res_w, res_h = result_img.size
+                    
+                    if (res_w, res_h) != (width, height):
+                        print(f"[NANO BANANA] AI returned {res_w}x{res_h}, target is {width}x{height}")
+                        
                         resample_filter = Image.Resampling.LANCZOS if hasattr(Image, 'Resampling') else Image.LANCZOS
+                        
+                        # Calculate target aspect ratio
+                        target_ratio = width / height
+                        result_ratio = res_w / res_h
+                        
+                        if abs(target_ratio - result_ratio) > 0.01:
+                            # Aspect ratios differ — crop to match target ratio first
+                            if result_ratio > target_ratio:
+                                # Result is wider than target → crop sides
+                                new_w = int(res_h * target_ratio)
+                                left = (res_w - new_w) // 2
+                                result_img = result_img.crop((left, 0, left + new_w, res_h))
+                                print(f"[NANO BANANA] Cropped width: {res_w} → {new_w} (removed {res_w - new_w}px sides)")
+                            else:
+                                # Result is taller than target → crop top/bottom
+                                new_h = int(res_w / target_ratio)
+                                top = (res_h - new_h) // 2
+                                result_img = result_img.crop((0, top, res_w, top + new_h))
+                                print(f"[NANO BANANA] Cropped height: {res_h} → {new_h} (removed {res_h - new_h}px top/bottom)")
+                        
+                        # Now resize to exact target (same aspect ratio, no distortion)
                         result_img = result_img.resize((width, height), resample_filter)
+                        print(f"[NANO BANANA] Resized to exact target: {width}x{height}")
                         
                         out_bytes = io.BytesIO()
-                        # Ensure RGB before saving
                         if result_img.mode not in ('RGB', 'RGBA'):
                             result_img = result_img.convert('RGB')
                         result_img.save(out_bytes, format='PNG')
                         image_data = out_bytes.getvalue()
+                    else:
+                        print(f"[NANO BANANA] AI result matches target dimensions perfectly: {width}x{height}")
             except Exception as e:
-                print(f"[NANO BANANA] Warning: Could not post-process result aspect ratio: {e}")
+                print(f"[NANO BANANA] Warning: Could not post-process result: {e}")
             
             self.result_image_data = image_data
             
@@ -203,6 +243,7 @@ class ImageEditThread(threading.Thread):
             try:
                 # Create new temp directory for result (since old one might be cleaned up)
                 import tempfile
+                from .threading_utils import ensure_image_editor_visible
                 result_temp_dir = tempfile.mkdtemp(prefix="nano_banana_result_")
                 result_path = os.path.join(result_temp_dir, "edited_result.png")
                 
@@ -225,43 +266,21 @@ class ImageEditThread(threading.Thread):
                 # CRITICAL: Set colorspace to sRGB (prevent color shifting)
                 if hasattr(new_image, 'colorspace_settings'):
                     new_image.colorspace_settings.name = 'sRGB'
-                    print(f"[NANO BANANA] Set colorspace to sRGB")
+                    print("[NANO BANANA] Set colorspace to sRGB")
                 
                 new_image.pack()  # Pack into blend file
                 
                 print(f"[NANO BANANA] Loaded result as: {new_image_name}")
                 
                 # Switch to new image in ALL Image Editor windows
-                switched = False
-                for window in bpy.context.window_manager.windows:
-                    for area in window.screen.areas:
-                        if area.type == 'IMAGE_EDITOR':
-                            for space in area.spaces:
-                                if space.type == 'IMAGE_EDITOR':
-                                    space.image = new_image
-                                    # Force switch to View mode to see result
-                                    space.mode = 'VIEW'
-                                    area.tag_redraw()
-                                    switched = True
-                                    print(f"[NANO BANANA] Switched window {window.as_pointer()} to edited image")
-                
-                if switched:
-                    print(f"[NANO BANANA] All Image Editors updated")
+                if ensure_image_editor_visible(new_image):
+                    print("[NANO BANANA] All Image Editors updated")
                 else:
-                    print(f"[NANO BANANA] Warning: No Image Editor found to display result")
+                    print("[NANO BANANA] Warning: No Image Editor found to display result")
                 
-                # Clean up result temp directory after a delay to prevent EXCEPTION_ACCESS_VIOLATION
-                import shutil
-                def delayed_cleanup():
-                    try:
-                        if os.path.exists(result_temp_dir):
-                            shutil.rmtree(result_temp_dir)
-                            print(f"[NANO BANANA] Cleaned up result temp dir")
-                    except Exception as e:
-                        print(f"[NANO BANANA] Delayed cleanup failed: {e}")
-                    return None
-                
-                bpy.app.timers.register(delayed_cleanup, first_interval=2.0)
+                # Store for history
+                self.result_path_for_history = result_path
+                self.result_image_name_for_history = new_image_name
                 
             except Exception as e:
                 print(f"[NANO BANANA] Error loading result: {e}")
@@ -277,12 +296,25 @@ class ImageEditThread(threading.Thread):
                 props = bpy.context.window_manager.nano_banana_editor
                 
                 history_item = props.edit_history.add()
-                history_item.prompt = self.edit_prompt
-                history_item.image_name = self.original_image_name
+                history_item.prompt = self.user_prompt
+                
+                # Use the generated image for history (if available)
+                if hasattr(self, 'result_image_name_for_history'):
+                    history_item.image_name = self.result_image_name_for_history
+                    history_item.filepath = getattr(self, 'result_path_for_history', "")
+                else:
+                    history_item.image_name = self.original_image_name
+                    
+                history_item.original_image_name = self.original_image_name
+                    
                 history_item.timestamp = datetime.now().strftime("%H:%M:%S")
                 history_item.has_mask = bool(self.mask_path)
                 
-                print(f"[NANO BANANA] Added edit to history: {self.edit_prompt[:50]}")
+                # Store smart points JSON if present
+                if hasattr(history_item, 'smart_points_json'):
+                    history_item.smart_points_json = self.smart_points_json
+                
+                print(f"[NANO BANANA] Added edit to history: {self.user_prompt[:50]}")
                 
             except Exception as e:
                 print(f"[NANO BANANA] Error adding to history: {e}")

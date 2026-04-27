@@ -2,9 +2,9 @@ bl_info = {
     "name": "Nanode AI Render Engine",
     "blender": (4, 5, 0),  # Minimum version, supports up to 5.0+
     "category": "Render", 
-    "version": (2, 6, 0),
+    "version": (2, 7, 0),
     "author": "Kovname",
-    "description": "The First Generative Pipeline for Blender — Rendering & Texturing (v2.6.0)",
+    "description": "Generative Pipeline for Blender",
     "location": "Render Properties (select 'Nano Banana' engine), Image Editor > N Panel > Nanode AI Editor",
     "doc_url": "https://nanode.tech/",
     "tracker_url": "https://github.com/Kovname/nano-banana-render/issues",
@@ -47,6 +47,8 @@ if "bpy" in locals():
         importlib.reload(threading_utils)
     if "image_editor" in locals():
         importlib.reload(image_editor)
+    if "smart_points" in locals():
+        importlib.reload(smart_points)
     if "image_edit_thread" in locals():
         importlib.reload(image_edit_thread)
     if "render_engine" in locals():
@@ -59,6 +61,8 @@ if "bpy" in locals():
         importlib.reload(texture_operators)
     if "updater" in locals():
         importlib.reload(updater)
+    if "history_previews" in locals():
+        importlib.reload(history_previews)
 
 # Import our modules
 from . import log
@@ -69,12 +73,14 @@ from . import depth_utils
 from . import gemini_api
 from . import threading_utils
 from . import image_editor
+from . import smart_points
 from . import image_edit_thread
 from . import render_engine
 from . import beta_api
 from . import texture_pipeline
 from . import texture_operators
 from . import updater
+from . import history_previews
 
 def get_hwid_stable() -> str:
     """Generate a stable 16-char Hardware ID hash based on MAC address."""
@@ -165,72 +171,54 @@ class NanoBananaPreferences(AddonPreferences):
         box.label(text="Privacy & Data Collection:", icon='LOCKED')
         box.prop(self, "eu_format")
 
-        # Debug section
-        box = layout.box()
-        box.label(text="Debug Tools:", icon='TOOL_SETTINGS')
-        
-        row = box.row(align=True)
-        try:
-            if hasattr(bpy.types, 'GEMINI_OT_reset_state'):
-                row.operator("gemini.reset_state", text="Reset UI State", icon='FILE_REFRESH')
-            if hasattr(bpy.types, 'GEMINI_OT_open_console'):  
-                row.operator("gemini.open_console", text="Open Console", icon='CONSOLE')
-        except Exception:
-            row.label(text="Debug operators not available", icon='INFO')
 
 # Registration - Core classes first
 core_classes = (
     NanoBananaPreferences,
     ui_panel.GeminiRenderHistoryItem,
     ui_panel.GeminiRenderProperties,
-    ui_panel.BANANA_PT_render_panel,
-    ui_panel.BANANA_PT_prompt,
-    ui_panel.BANANA_PT_render_mode,
-    ui_panel.BANANA_PT_mist,
-    ui_panel.BANANA_PT_style_reference,
-    ui_panel.BANANA_PT_history_panel,
-    operators.GEMINI_OT_ai_render,
-    operators.GEMINI_OT_stop_render,
-    operators.GEMINI_OT_load_history,
-    operators.GEMINI_OT_delete_history,
-    operators.GEMINI_OT_use_history_prompt,
-    operators.GEMINI_OT_use_history_style,
-    operators.GEMINI_OT_use_history_both,
-    operators.GEMINI_OT_history_context_menu,
-    operators.GEMINI_OT_open_history_image,
-    operators.GEMINI_OT_load_image_as_reference,
-    operators.GEMINI_OT_open_api_key_url,
-    operators.GEMINI_OT_validate_api_key,
-    operators.GEMINI_OT_open_preferences,
-    operators.BANANA_OT_send_feedback,
-    operators.BANANA_OT_rate_generation,
-    operators.BANANA_OT_refresh_balance,
-    operators.BANANA_OT_toggle_feedback,
-    operators.BANANA_OT_google_login,
-    operators.BANANA_OT_logout,
-    operators.BANANA_OT_open_store,
-    operators.BANANA_OT_show_no_credits_popup,
-    ui_panel.BANANA_PT_texturing_npanel,
-    texture_operators.BANANA_OT_init_tex_cameras,
-    texture_operators.BANANA_OT_update_tex_cameras,
-    texture_operators.BANANA_OT_preview_tex_camera,
-    texture_operators.BANANA_OT_texture_draft,
-    texture_operators.BANANA_OT_texture_enhance,
-    texture_operators.BANANA_OT_cleanup_tex,
-    texture_operators.BANANA_OT_clear_tex_reference,
-    texture_operators.BANANA_OT_load_tex_reference,
-    updater.NANODE_OT_install_update,
-    updater.NANODE_OT_update_dialog,
+    ui_panel.BananaPTRenderPanel,
+    ui_panel.BananaPTPrompt,
+    ui_panel.BananaPTRenderMode,
+    ui_panel.BananaPTMist,
+    ui_panel.BananaPTStyleReference,
+    ui_panel.BananaPTHistoryPanel,
+    operators.GeminiOTAIRender,
+    operators.GeminiOTStopRender,
+    operators.GeminiOTLoadHistory,
+    operators.GeminiOTDeleteHistory,
+    operators.GeminiOTUseHistoryPrompt,
+    operators.GeminiOTUseHistoryStyle,
+    operators.GeminiOTUseHistoryBoth,
+    operators.GeminiOTHistoryContextMenu,
+    operators.GeminiOTOpenHistoryImage,
+    operators.GeminiOTLoadImageAsReference,
+    operators.GeminiOTOpenApiKeyUrl,
+    operators.GeminiOTValidateApiKey,
+    operators.GeminiOTOpenPreferences,
+    operators.BananaOTSendFeedback,
+    operators.BananaOTRateGeneration,
+    operators.BananaOTRefreshBalance,
+    operators.BananaOTToggleFeedback,
+    operators.BananaOTGoogleLogin,
+    operators.BananaOTLogout,
+    operators.BananaOTOpenStore,
+    operators.BananaOTShowNoCreditsPopup,
+    ui_panel.BananaPTTexturingNpanel,
+    texture_operators.BananaOTInitTexCameras,
+    texture_operators.BananaOTUpdateTexCameras,
+    texture_operators.BananaOTPreviewTexCamera,
+    texture_operators.BananaOTTextureDraft,
+    texture_operators.BananaOTTextureEnhance,
+    texture_operators.BananaOTCleanupTex,
+    texture_operators.BananaOTClearTexReference,
+    texture_operators.BananaOTLoadTexReference,
+    updater.NanodeOTInstallUpdate,
+    updater.NanodeOTUpdateDialog,
 )
 
-# Optional debug classes (register separately to avoid conflicts)
-debug_classes = (
-    operators.GEMINI_OT_reset_state,
-    operators.GEMINI_OT_open_console,
-)
-
-# All classes combined
-classes = core_classes + debug_classes
+# All core classes combined
+classes = core_classes
 
 def register():
     # Register render engine first
@@ -247,13 +235,8 @@ def register():
         except Exception as e:
             print(f"Error registering core class {cls}: {e}")
     
-    # Try to register debug classes (optional)
-    for cls in debug_classes:
-        try:
-            bpy.utils.register_class(cls)
-        except Exception as e:
-            print(f"Warning: Could not register debug class {cls}: {e}")
-            # Continue without debug classes if they fail
+    # Init history previews gallery
+    history_previews.init_previews()
     
     # Register Image Editor module
     try:
@@ -287,6 +270,9 @@ def register():
         bpy.app.timers.register(updater.update_poll_timer, first_interval=3.0)
 
 def unregister():
+    # Clear history previews gallery
+    history_previews.clear_previews()
+
     # Unregister render engine
     try:
         render_engine.unregister()

@@ -1,4 +1,5 @@
 import bpy
+from typing import Optional
 from bpy.types import Operator
 from bpy.props import IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
@@ -19,7 +20,9 @@ from .credentials import (
 
 logger = logging.getLogger("nano_banana")
 
-class GEMINI_OT_ai_render(Operator):
+MSG_INVALID_HISTORY = "Invalid history index"
+
+class GeminiOTAIRender(Operator):
     """AI Render operator - main functionality"""
     bl_idname = "gemini.ai_render"
     bl_label = "AI Render"
@@ -77,7 +80,7 @@ class GEMINI_OT_ai_render(Operator):
             props.status_text = f"Error: {str(e)}"
             return {'CANCELLED'}
     
-    def _validate_inputs(self, context, props) -> str:
+    def _validate_inputs(self, context, props) -> Optional[str]:
         """Validate inputs and return error message if invalid"""
         # Check prompt
         if not props.prompt.strip():
@@ -100,7 +103,7 @@ class GEMINI_OT_ai_render(Operator):
         
         return None  # No errors
 
-class GEMINI_OT_stop_render(Operator):
+class GeminiOTStopRender(Operator):
     """Stop current AI render operation"""
     bl_idname = "gemini.stop_render"
     bl_label = "Stop Render"
@@ -113,10 +116,10 @@ class GEMINI_OT_stop_render(Operator):
             props = context.scene.gemini_render
             
             # Stop background thread if running
-            if hasattr(GEMINI_OT_ai_render, 'current_thread') and GEMINI_OT_ai_render.current_thread:
-                if GEMINI_OT_ai_render.current_thread.is_alive():
-                    GEMINI_OT_ai_render.current_thread.stop()
-                    GEMINI_OT_ai_render.current_thread.join(timeout=3.0)
+            if hasattr(GeminiOTAIRender, 'current_thread') and GeminiOTAIRender.current_thread:
+                if GeminiOTAIRender.current_thread.is_alive():
+                    GeminiOTAIRender.current_thread.stop()
+                    GeminiOTAIRender.current_thread.join(timeout=3.0)
             
             # Reset UI state
             props.is_rendering = False
@@ -137,7 +140,7 @@ class GEMINI_OT_stop_render(Operator):
 
 # Additional utility operators
 
-class GEMINI_OT_open_api_key_url(Operator):
+class GeminiOTOpenApiKeyUrl(Operator):
     """Open Google AI Studio URL to get API key"""
     bl_idname = "gemini.open_api_key_url"
     bl_label = "Get API Key"
@@ -151,7 +154,7 @@ class GEMINI_OT_open_api_key_url(Operator):
         self.report({'INFO'}, "Opened Google AI Studio in browser")
         return {'FINISHED'}
 
-class GEMINI_OT_validate_api_key(Operator):
+class GeminiOTValidateApiKey(Operator):
     """Validate beta token"""
     bl_idname = "gemini.validate_api_key"
     bl_label = "Test Beta Token"
@@ -186,7 +189,7 @@ class GEMINI_OT_validate_api_key(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_open_preferences(Operator):
+class GeminiOTOpenPreferences(Operator):
     """Open addon preferences to configure API key"""
     bl_idname = "gemini.open_preferences"
     bl_label = "Open Addon Preferences"
@@ -203,7 +206,7 @@ class GEMINI_OT_open_preferences(Operator):
             self.report({'ERROR'}, f"Failed to open preferences: {str(e)}")
             return {'CANCELLED'}
 
-class GEMINI_OT_reset_state(Operator):
+class GeminiOTResetState(Operator):
     """Reset UI state in case of stuck rendering"""
     bl_idname = "gemini.reset_state"
     bl_label = "Reset UI State"
@@ -221,10 +224,10 @@ class GEMINI_OT_reset_state(Operator):
             props.status_text = "🔄 UI state reset"
             
             # Try to stop any running background threads
-            if hasattr(GEMINI_OT_ai_render, 'current_thread') and GEMINI_OT_ai_render.current_thread:
+            if hasattr(GeminiOTAIRender, 'current_thread') and GeminiOTAIRender.current_thread:
                 try:
-                    GEMINI_OT_ai_render.current_thread.stop()
-                    GEMINI_OT_ai_render.current_thread = None
+                    GeminiOTAIRender.current_thread.stop()
+                    GeminiOTAIRender.current_thread = None
                 except Exception:
                     pass
             
@@ -240,7 +243,7 @@ class GEMINI_OT_reset_state(Operator):
             self.report({'ERROR'}, f"Failed to reset state: {str(e)}")
             return {'CANCELLED'}
 
-class GEMINI_OT_open_console(Operator):
+class GeminiOTOpenConsole(Operator):
     """Open Blender console to view logs"""
     bl_idname = "gemini.open_console"
     bl_label = "Open Console"
@@ -258,7 +261,7 @@ class GEMINI_OT_open_console(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_load_history(Operator):
+class GeminiOTLoadHistory(Operator):
     """Load render result from history"""
     bl_idname = "gemini.load_history"
     bl_label = "Load History Render"
@@ -276,7 +279,7 @@ class GEMINI_OT_load_history(Operator):
             props = context.scene.gemini_render
             
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                self.report({'ERROR'}, "Invalid history index")
+                self.report({'ERROR'}, MSG_INVALID_HISTORY)
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
@@ -374,7 +377,7 @@ class GEMINI_OT_load_history(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_delete_history(Operator):
+class GeminiOTDeleteHistory(Operator):
     """Delete render from history"""
     bl_idname = "gemini.delete_history"
     bl_label = "Delete History Render"
@@ -392,7 +395,7 @@ class GEMINI_OT_delete_history(Operator):
             props = context.scene.gemini_render
             
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                self.report({'ERROR'}, "Invalid history index")
+                self.report({'ERROR'}, MSG_INVALID_HISTORY)
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
@@ -416,7 +419,7 @@ class GEMINI_OT_delete_history(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_use_history_prompt(Operator):
+class GeminiOTUseHistoryPrompt(Operator):
     """Use prompt from render history"""
     bl_idname = "gemini.use_history_prompt"
     bl_label = "Use History Prompt"
@@ -434,7 +437,7 @@ class GEMINI_OT_use_history_prompt(Operator):
             props = context.scene.gemini_render
             
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                self.report({'ERROR'}, "Invalid history index")
+                self.report({'ERROR'}, MSG_INVALID_HISTORY)
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
@@ -451,7 +454,7 @@ class GEMINI_OT_use_history_prompt(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_use_history_style(Operator):
+class GeminiOTUseHistoryStyle(Operator):
     """Use style reference from render history"""
     bl_idname = "gemini.use_history_style"
     bl_label = "Use History Style"
@@ -469,7 +472,7 @@ class GEMINI_OT_use_history_style(Operator):
             props = context.scene.gemini_render
             
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                self.report({'ERROR'}, "Invalid history index")
+                self.report({'ERROR'}, MSG_INVALID_HISTORY)
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
@@ -502,7 +505,7 @@ class GEMINI_OT_use_history_style(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_history_context_menu(Operator):
+class GeminiOTHistoryContextMenu(Operator):
     """Show context menu for render history item"""
     bl_idname = "gemini.history_context_menu"
     bl_label = "History Context Menu"
@@ -557,7 +560,7 @@ class GEMINI_OT_history_context_menu(Operator):
         return {'FINISHED'}
 
 
-class GEMINI_OT_use_history_both(Operator):
+class GeminiOTUseHistoryBoth(Operator):
     """Use both prompt and style from render history"""
     bl_idname = "gemini.use_history_both"
     bl_label = "Use History Prompt + Style"
@@ -575,7 +578,7 @@ class GEMINI_OT_use_history_both(Operator):
             props = context.scene.gemini_render
             
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                self.report({'ERROR'}, "Invalid history index")
+                self.report({'ERROR'}, MSG_INVALID_HISTORY)
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
@@ -597,10 +600,10 @@ class GEMINI_OT_use_history_both(Operator):
                     self.report({'INFO'}, f"Both copied: prompt + style ({style_image.name})")
                 else:
                     props.use_style_reference = False
-                    self.report({'WARNING'}, f"Style missing, copied prompt only")
+                    self.report({'WARNING'}, "Style missing, copied prompt only")
             else:
                 props.use_style_reference = False
-                self.report({'INFO'}, f"Prompt copied (no style was used)")
+                self.report({'INFO'}, "Prompt copied (no style was used)")
             
             return {'FINISHED'}
                 
@@ -609,7 +612,7 @@ class GEMINI_OT_use_history_both(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_open_history_image(Operator):
+class GeminiOTOpenHistoryImage(Operator):
     """Open history image in full size"""
     bl_idname = "gemini.open_history_image"
     bl_label = "Open History Image"
@@ -627,7 +630,7 @@ class GEMINI_OT_open_history_image(Operator):
             props = context.scene.gemini_render
             
             if self.history_index < 0 or self.history_index >= len(props.render_history):
-                self.report({'ERROR'}, "Invalid history index")
+                self.report({'ERROR'}, MSG_INVALID_HISTORY)
                 return {'CANCELLED'}
             
             history_item = props.render_history[self.history_index]
@@ -695,7 +698,7 @@ class GEMINI_OT_open_history_image(Operator):
             return {'CANCELLED'}
 
 
-class GEMINI_OT_load_image_as_reference(Operator, ImportHelper):
+class GeminiOTLoadImageAsReference(Operator, ImportHelper):
     """Load image file as style reference"""
     bl_idname = "gemini.load_image_as_reference"
     bl_label = "Load Image as Reference"
@@ -778,7 +781,7 @@ class GEMINI_OT_load_image_as_reference(Operator, ImportHelper):
 
 # ─── Beta Operators ───────────────────────────────────────────
 
-class BANANA_OT_send_feedback(Operator):
+class BananaOTSendFeedback(Operator):
     """Submit feedback and earn bonus generations"""
     bl_idname = "banana.send_feedback"
     bl_label = "Submit Feedback"
@@ -809,7 +812,7 @@ class BANANA_OT_send_feedback(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_rate_generation(Operator):
+class BananaOTRateGeneration(Operator):
     """Rate the last AI generation"""
     bl_idname = "banana.rate_generation"
     bl_label = "Rate Generation"
@@ -845,7 +848,7 @@ class BANANA_OT_rate_generation(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_refresh_balance(Operator):
+class BananaOTRefreshBalance(Operator):
     """Refresh generations balance from server"""
     bl_idname = "banana.refresh_balance"
     bl_label = "Refresh Balance"
@@ -872,7 +875,7 @@ class BANANA_OT_refresh_balance(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_toggle_feedback(Operator):
+class BananaOTToggleFeedback(Operator):
     """Toggle the feedback input panel"""
     bl_idname = "banana.toggle_feedback"
     bl_label = "Toggle Feedback"
@@ -884,7 +887,7 @@ class BANANA_OT_toggle_feedback(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_google_login(Operator):
+class BananaOTGoogleLogin(Operator):
     """Login with Google — opens browser, receives API key automatically"""
     bl_idname = "banana.google_login"
     bl_label = "Login with Google"
@@ -901,8 +904,7 @@ class BANANA_OT_google_login(Operator):
         import socket
         from . import beta_api
 
-        operator_self = self
-
+        
         # ─── Find a free port ─────────────────────────────────
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(('localhost', 0))
@@ -980,7 +982,7 @@ class BANANA_OT_google_login(Operator):
 
         # ─── Start local server in background ────────────────
         server = HTTPServer(('localhost', port), CallbackHandler)
-        BANANA_OT_google_login._server = server
+        BananaOTGoogleLogin._server = server
 
         def _run_server():
             try:
@@ -990,7 +992,7 @@ class BANANA_OT_google_login(Operator):
 
         thread = threading.Thread(target=_run_server, daemon=True)
         thread.start()
-        BANANA_OT_google_login._thread = thread
+        BananaOTGoogleLogin._thread = thread
 
         # ─── Open browser via api.nanode.tech ──────────────────
         login_url = f"https://api.nanode.tech/auth/google/login?callback_port={port}"
@@ -1000,7 +1002,7 @@ class BANANA_OT_google_login(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_logout(Operator):
+class BananaOTLogout(Operator):
     """Log out of Nanode account"""
     bl_idname = "banana.logout"
     bl_label = "Log Out"
@@ -1218,7 +1220,7 @@ def _login_success_html(name: str, email: str, balance: str) -> str:
 </html>"""
 
 
-class BANANA_OT_open_store(Operator):
+class BananaOTOpenStore(Operator):
     """Open the credits store in browser"""
     bl_idname = "banana.open_store"
     bl_label = "Buy Credits"
@@ -1231,7 +1233,7 @@ class BANANA_OT_open_store(Operator):
         return {'FINISHED'}
 
 
-class BANANA_OT_show_no_credits_popup(Operator):
+class BananaOTShowNoCreditsPopup(Operator):
     """Show popup when user doesn't have enough credits"""
     bl_idname = "banana.show_no_credits_popup"
     bl_label = "Not Enough Credits"

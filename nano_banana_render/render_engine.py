@@ -3,7 +3,7 @@ Custom Render Engine for Nano Banana
 Registers 'Nano Banana' in Blender's Render Engine dropdown.
 
 Architecture:
-  F12 → BANANA_OT_render (pre-captures viewport via opengl) →
+  F12 → BananaOTRender (pre-captures viewport via opengl) →
   stores path → triggers bpy.ops.render.render →
   NanoBananaRenderEngine.render() picks up stored capture →
   calls Gemini API → loads result
@@ -31,7 +31,7 @@ _pre_capture = {
 }
 
 
-class BANANA_OT_render(bpy.types.Operator):
+class BananaOTRender(bpy.types.Operator):
     """Pre-capture viewport, then trigger F12 render engine"""
     bl_idname = "banana.ai_render"
     bl_label = "AI Render"
@@ -101,7 +101,7 @@ class BANANA_OT_render(bpy.types.Operator):
 
 
 class NanoBananaRenderEngine(bpy.types.RenderEngine):
-    """Custom render engine — uses pre-captured viewport data from BANANA_OT_render"""
+    """Custom render engine — uses pre-captured viewport data from BananaOTRender"""
     bl_idname = 'NANO_BANANA'
     bl_label = 'Nano Banana'
     bl_use_preview = False
@@ -111,7 +111,7 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
 
     def render(self, depsgraph):
         """
-        Called by Blender after BANANA_OT_render pre-captured the viewport.
+        Called by Blender after BananaOTRender pre-captured the viewport.
         Reads the stored capture, calls Gemini API, writes result into F12 viewer.
         """
         render_start = time.time()
@@ -195,7 +195,7 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
                         scene.gemini_render.last_generation_rated = False
                 threading_utils.execute_in_main_thread(_update_direct_ui)
                 
-                self.update_stats("", f"Connecting directly to Google API...")
+                self.update_stats("", "Connecting directly to Google API...")
                 gemini = GeminiAPI(api_key=token, model=model_name)
                 is_color = (render_mode == 'EEVEE')
                 image_data, _ = gemini.generate_image(
@@ -298,8 +298,20 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
         render_w = int(scene.render.resolution_x * scene.render.resolution_percentage / 100)
         render_h = int(scene.render.resolution_y * scene.render.resolution_percentage / 100)
 
-        # Decode PNG bytes into raw pixel data and write directly into render buffer.
-        # This eliminates the race condition where an empty frame was shown first.
+        self._write_image_to_render_buffer(image_data, render_w, render_h)
+
+        elapsed = time.time() - render_start
+        
+        def _process_result_main_thread():
+            _finalize_render_in_main_thread(image_data, props.prompt, scene, elapsed)
+
+        threading_utils.execute_in_main_thread(_process_result_main_thread)
+
+        self.update_stats("", f"AI render completed in {elapsed:.1f}s")
+
+
+    def _write_image_to_render_buffer(self, image_data: bytes, render_w: int, render_h: int):
+        """Helper to write image directly to Blender F12 buffer."""
         buffer_written = False
         try:
             import io
@@ -308,110 +320,88 @@ class NanoBananaRenderEngine(bpy.types.RenderEngine):
                 pil_img = PILImage.open(io.BytesIO(image_data)).convert('RGBA')
                 pil_img = pil_img.resize((render_w, render_h), PILImage.LANCZOS)
                 
-                # Convert to float RGBA list (Blender expects 0.0-1.0)
-                import struct
                 raw = pil_img.tobytes()
                 pixel_count = render_w * render_h
                 pixels = []
                 for i in range(pixel_count):
                     offset = i * 4
-                    r = raw[offset] / 255.0
-                    g = raw[offset + 1] / 255.0
-                    b = raw[offset + 2] / 255.0
-                    a = raw[offset + 3] / 255.0
-                    pixels.extend([r, g, b, a])
+                    pixels.extend([raw[offset]/255.0, raw[offset+1]/255.0, raw[offset+2]/255.0, raw[offset+3]/255.0])
                 
-                # Blender render result expects bottom-to-top row order (flip vertically)
                 flipped_pixels = []
                 for row in range(render_h - 1, -1, -1):
                     row_start = row * render_w * 4
-                    row_end = row_start + render_w * 4
-                    flipped_pixels.extend(pixels[row_start:row_end])
+                    flipped_pixels.extend(pixels[row_start:row_start + render_w * 4])
                 
                 result = self.begin_result(0, 0, render_w, render_h)
                 layer = result.layers[0]
                 try:
                     layer.passes["Combined"].rect = [flipped_pixels[i:i+4] for i in range(0, len(flipped_pixels), 4)]
                 except Exception:
-                    # Fallback: try .rect flat assignment
                     layer.passes["Combined"].rect.foreach_set(flipped_pixels)
                 self.end_result(result)
                 buffer_written = True
-                print(f"[NANO BANANA] Wrote {render_w}x{render_h} AI image directly to render buffer (PIL)")
             except ImportError:
                 print("[NANO BANANA] PIL not available, using bpy.data.images fallback")
         except Exception as e:
             print(f"[NANO BANANA] Direct buffer write failed: {e}")
 
         if not buffer_written:
-            # Fallback: write empty frame first, then load via file
             try:
                 result = self.begin_result(0, 0, render_w, render_h)
                 self.end_result(result)
             except Exception as e:
                 print(f"[NANO BANANA] Error writing fallback to render buffer: {e}")
 
-        # --- Save to history and load image as Blender datablock (in main thread) ---
-        elapsed = time.time() - render_start
 
-        def _process_result_main_thread():
-            import tempfile
-            temp_path = None
-            
+def _finalize_render_in_main_thread(image_data: bytes, prompt: str, scene, elapsed: float):
+    """Helper executed in main thread to load image datablock and swap viewer."""
+    import tempfile
+    import os
+    temp_path = None
+    
+    try:
+        _save_render_to_history(image_data, prompt, scene)
+    except Exception as e:
+        print(f"[NANO BANANA] History save error: {e}")
+        
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+            f.write(image_data)
+            temp_path = f.name
+
+        result_img_name = "Nano Banana Render"
+        if result_img_name in bpy.data.images:
+            bpy.data.images.remove(bpy.data.images[result_img_name])
+
+        result_img = bpy.data.images.load(temp_path)
+        result_img.name = result_img_name
+        result_img.colorspace_settings.name = 'sRGB'
+        result_img.pack()
+
+        _pre_capture['result_image'] = result_img_name
+    except Exception as e:
+        print(f"[NANO BANANA] Error loading AI result into Blender: {e}")
+    finally:
+        if temp_path:
             try:
-                _save_render_to_history(image_data, props.prompt, scene)
-            except Exception as e:
-                print(f"[NANO BANANA] History save error: {e}")
-                
-            try:
-                # Save image_data to temp file and load into Blender as a proper Image datablock
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-                    f.write(image_data)
-                    temp_path = f.name
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
-                result_img_name = "Nano Banana Render"
-                if result_img_name in bpy.data.images:
-                    bpy.data.images.remove(bpy.data.images[result_img_name])
+    if hasattr(scene, 'gemini_render'):
+        scene.gemini_render.status_text = f"Done in {elapsed:.1f}s"
+        scene.gemini_render.is_rendering = False
 
-                result_img = bpy.data.images.load(temp_path)
-                result_img.name = result_img_name
-                result_img.colorspace_settings.name = 'sRGB'
-                result_img.pack()  # Pack into .blend so it survives temp file deletion
-
-                _pre_capture['result_image'] = result_img_name
-            except Exception as e:
-                print(f"[NANO BANANA] Error loading AI result into Blender: {e}")
-            finally:
-                if temp_path:
-                    try:
-                        os.unlink(temp_path)
-                    except OSError:
-                        pass
-
-            # Update status with timing
-            if hasattr(scene, 'gemini_render'):
-                scene.gemini_render.status_text = f"Done in {elapsed:.1f}s"
-                scene.gemini_render.is_rendering = False
-
-            # --- Swap F12 Image Editor to show our AI image with correct sRGB colors ---
-            result_img_name = _pre_capture.get('result_image')
-            if result_img_name and result_img_name in bpy.data.images:
-                ai_img = bpy.data.images[result_img_name]
-                # Find the Image Editor that is showing "Render Result" (F12 window)
-                for window in bpy.context.window_manager.windows:
-                    for area in window.screen.areas:
-                        if area.type == 'IMAGE_EDITOR':
-                            for space in area.spaces:
-                                if space.type == 'IMAGE_EDITOR':
-                                    # Check if it's showing Render Result
-                                    if space.image and space.image.name == 'Render Result':
-                                        space.image = ai_img
-                                        print(f"[NANO BANANA] Swapped F12 viewer to '{result_img_name}' (sRGB)")
-                        area.tag_redraw()
-
-        threading_utils.execute_in_main_thread(_process_result_main_thread)
-
-        self.update_stats("", f"AI render completed in {elapsed:.1f}s")
+    result_img_name = _pre_capture.get('result_image')
+    if result_img_name and result_img_name in bpy.data.images:
+        ai_img = bpy.data.images[result_img_name]
+        for window in bpy.context.window_manager.windows:
+            for area in window.screen.areas:
+                if area.type == 'IMAGE_EDITOR':
+                    for space in area.spaces:
+                        if space.type == 'IMAGE_EDITOR' and getattr(space.image, 'name', '') == 'Render Result':
+                            space.image = ai_img
+                area.tag_redraw()
 
 
 def _save_render_to_history(image_data: bytes, user_prompt: str, scene):
@@ -561,7 +551,7 @@ def _depsgraph_update_handler(scene, depsgraph=None):
 
 def register():
     bpy.utils.register_class(NanoBananaRenderEngine)
-    bpy.utils.register_class(BANANA_OT_render)
+    bpy.utils.register_class(BananaOTRender)
 
     # Add our engine to standard Blender panels
     for panel in get_standard_panels():
@@ -603,5 +593,5 @@ def unregister():
             panel.COMPAT_ENGINES.discard('NANO_BANANA')
     _registered_panels.clear()
 
-    bpy.utils.unregister_class(BANANA_OT_render)
+    bpy.utils.unregister_class(BananaOTRender)
     bpy.utils.unregister_class(NanoBananaRenderEngine)

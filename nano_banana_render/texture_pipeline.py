@@ -222,7 +222,7 @@ def update_cameras(distance: float = 0, ortho_scale: float = 0,
     used_ortho = ortho_scale if ortho_scale > 0 else max(dims) * 1.15
 
     prefix = TEMP_PREFIX + "cam_"
-    for obj in list(bpy.data.objects):
+    for obj in bpy.data.objects:
         if not obj.name.startswith(prefix):
             continue
         view_name = obj.name[len(prefix):]
@@ -244,9 +244,8 @@ def remove_temp_cameras():
     for obj in to_remove:
         data = obj.data
         bpy.data.objects.remove(obj, do_unlink=True)
-        if data and data.users == 0:
-            if isinstance(data, bpy.types.Camera):
-                bpy.data.cameras.remove(data)
+        if data and data.users == 0 and isinstance(data, bpy.types.Camera):
+            bpy.data.cameras.remove(data)
     print(f"[TEX PIPE] Cleaned up {len(to_remove)} temp objects")
 
 
@@ -401,9 +400,7 @@ def setup_flat_render(scene, resolution: int = 1024):
         print("[TEX PIPE] Flat render: Eevee (shadows off)")
 
 
-def setup_mist_render(scene, resolution: int = 1024,
-                      mist_start: float = 0.1, mist_depth: float = 10.0,
-                      mist_falloff: str = 'LINEAR'):
+def setup_mist_render(scene, resolution: int = 1024):
     """Configure scene for mist viewport rendering.
 
     Enables mist pass and switches engine to Eevee.
@@ -889,6 +886,37 @@ def _manual_ortho_project(obj, cam_obj, uv_layer_name: str):
 
 # ─── Node Group builder ─────────────────────────────────────────
 
+
+def _create_mapping_nodes(group, scale=1.0):
+        nodes = group.nodes
+        links = group.links
+        tex_coord = nodes.new('ShaderNodeTexCoord')
+        tex_coord.location = (-1000, 0)
+        
+        mapping = nodes.new('ShaderNodeMapping')
+        mapping.location = (-800, 0)
+        mapping.inputs['Scale'].default_value = (scale, scale, scale)
+        links.new(tex_coord.outputs['UV'], mapping.inputs['Vector'])
+        
+        return mapping
+
+def _setup_base_color_mix(group, base_img_node, proj_img_node, mix_factor, location):
+        nodes = group.nodes
+        links = group.links
+        mix_rgb = nodes.new('ShaderNodeMixRGB')
+        mix_rgb.location = location
+        mix_rgb.blend_type = 'MIX'
+        
+        links.new(base_img_node.outputs['Color'], mix_rgb.inputs[1])
+        links.new(proj_img_node.outputs['Color'], mix_rgb.inputs[2])
+        
+        if isinstance(mix_factor, float):
+            mix_rgb.inputs[0].default_value = mix_factor
+        else:
+            links.new(mix_factor, mix_rgb.inputs[0])
+            
+        return mix_rgb
+
 def _build_projection_group(cameras: list, texture_paths: list):
     """Build a ShaderNodeTree group for multi-view projection.
 
@@ -899,8 +927,6 @@ def _build_projection_group(cameras: list, texture_paths: list):
     Blending: normalized weight blending (weights sum to 1.0) ensures
     smooth, seam-free transitions for complex models like characters.
     """
-    PRIMARY_NAMES = {'Front', 'Back', 'Left', 'Right', 'Top', 'Bottom'}
-
     group_name = "NB_Texture_Projection"
     old = bpy.data.node_groups.get(group_name)
     if old:
@@ -1048,7 +1074,7 @@ def _build_projection_group(cameras: list, texture_paths: list):
         # Clamp negative (backfacing → 0)
         clamp = nodes.new('ShaderNodeMath')
         clamp.operation = 'MAXIMUM'
-        clamp.label = f"Clamp"
+        clamp.label = "Clamp"
         clamp.location = (COL_RAMP, row_y - 220)
         clamp.parent = frame
         clamp.hide = True
@@ -1071,7 +1097,7 @@ def _build_projection_group(cameras: list, texture_paths: list):
         if view_name in PRIORITY_VIEWS:
             boost = nodes.new('ShaderNodeMath')
             boost.operation = 'MULTIPLY'
-            boost.label = f"Boost ×2"
+            boost.label = "Boost ×2"
             boost.location = (COL_RAMP + 360, row_y - 220)
             boost.parent = frame
             boost.hide = True
@@ -1332,13 +1358,13 @@ def _has_gpu() -> bool:
 
 def cleanup_temp_data():
     """Remove all temporary images, materials, UV layers, and cameras."""
-    for img in list(bpy.data.images):
-        if img.name.startswith(TEMP_PREFIX) or img.name.startswith("NB_Tex_"):
-            bpy.data.images.remove(img)
+    to_remove_imgs = [img for img in bpy.data.images if img.name.startswith(TEMP_PREFIX) or img.name.startswith("NB_Tex_")]
+    for img in to_remove_imgs:
+        bpy.data.images.remove(img)
 
-    for mat in list(bpy.data.materials):
-        if mat.name.startswith("NB_"):
-            bpy.data.materials.remove(mat)
+    to_remove_mats = [mat for mat in bpy.data.materials if mat.name.startswith("NB_")]
+    for mat in to_remove_mats:
+        bpy.data.materials.remove(mat)
 
     for mesh in bpy.data.meshes:
         to_remove = [

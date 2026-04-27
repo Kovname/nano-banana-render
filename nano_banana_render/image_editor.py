@@ -10,6 +10,9 @@ from typing import Optional
 from bpy.types import Panel, PropertyGroup, Operator
 from bpy.props import StringProperty, BoolProperty, CollectionProperty, IntProperty, PointerProperty, EnumProperty
 
+# Smart Points — lazy import to keep module order clean
+from . import smart_points as _sp
+
 class EditHistoryItem(PropertyGroup):
     """Single edit in the session history"""
     
@@ -35,6 +38,23 @@ class EditHistoryItem(PropertyGroup):
         name="Has Mask",
         description="Whether this edit used a mask",
         default=False
+    )
+    
+    smart_points_json: StringProperty(
+        name="Smart Points JSON",
+        default=""
+    )
+    
+    filepath: StringProperty(
+        name="File Path",
+        description="Path to the generated result image file",
+        default=""
+    )
+    
+    original_image_name: StringProperty(
+        name="Original Image Name",
+        description="Name of the original image in bpy.data.images before the edit",
+        default=""
     )
 
 class ImageEditorProperties(PropertyGroup):
@@ -104,6 +124,13 @@ class ImageEditorProperties(PropertyGroup):
         description="Draw what you want AI to create (inpainting)",
         default=False
     )
+
+    # Smart Points mode
+    use_smart_points: BoolProperty(
+        name="Use Smart Points",
+        description="Place numbered markers on the image and give each one a separate prompt",
+        default=False
+    )
     
     # Paint brush settings
     brush_size: bpy.props.IntProperty(
@@ -159,11 +186,17 @@ class ImageEditorProperties(PropertyGroup):
         default="Ready to edit"
     )
 
+    # Smart Points collection
+    smart_points: CollectionProperty(
+        type=_sp.SmartPointItem,
+        name="Smart Points"
+    )
 
-class BANANA_PT_image_editor_panel(Panel):
+
+class BananaPTImageEditorPanel(Panel):
     """Main Image Editor panel for AI post-processing"""
     bl_label = "Nanode AI Editor"
-    bl_idname = "BANANA_PT_image_editor_panel"
+    bl_idname = "BananaPTImageEditorPanel"
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Nanode AI Editor"
@@ -298,6 +331,15 @@ class BANANA_PT_image_editor_panel(Panel):
             col.prop(props, "brush_size")
             col.prop(props, "brush_color", text="Color")
         
+        # Smart Points mode (toggle, like inpainting)
+        layout.separator()
+        box = layout.box()
+        row = box.row()
+        row.prop(props, "use_smart_points", text="📍 Smart Points", toggle=True)
+        
+        if props.use_smart_points:
+            _sp.draw_smart_points_ui(box, props)
+        
         # Reference Image section (add objects/people)
         layout.separator()
         box = layout.box()
@@ -310,11 +352,11 @@ class BANANA_PT_image_editor_panel(Panel):
             row.prop_search(props, "reference_image", bpy.data, "images", text="", icon='IMAGE_DATA')
             
             # Custom load button that doesn't switch Image Editor
-            load_op = row.operator("nano_banana.load_reference_image", text="", icon='FILEBROWSER')
+            row.operator("nano_banana.load_reference_image", text="", icon='FILEBROWSER')
             
             # Unlink button
             if props.reference_image:
-                unlink_op = row.operator("nano_banana.unlink_reference_image", text="", icon='X')
+                row.operator("nano_banana.unlink_reference_image", text="", icon='X')
             
             if props.reference_image:
                 box.label(text=f"✓ {props.reference_image.name}", icon='CHECKMARK')
@@ -327,6 +369,11 @@ class BANANA_PT_image_editor_panel(Panel):
             else:
                 box.label(text="Click 📂 to load", icon='INFO')
         
+        # ── Determine if smart points provide a valid prompt ──
+        has_sp = (props.use_smart_points
+                  and len(props.smart_points) > 0
+                  and all(pt.prompt.strip() for pt in props.smart_points))
+        
         # Main action buttons (skip if inpainting - has own button)
         if not props.use_inpainting:
             layout.separator()
@@ -335,13 +382,13 @@ class BANANA_PT_image_editor_panel(Panel):
             
             if props.is_editing:
                 col.enabled = False
-                col.operator("nano_banana.apply_edit", text="🔄 Processing...", icon='TIME')
+                col.operator(OP_APPLY_EDIT, text="🔄 Processing...", icon='NONE')
             else:
-                if props.edit_prompt.strip() or props.use_reference_image:
-                    col.operator("nano_banana.apply_edit", text="✨ Apply AI Edit", icon='BRUSH_DATA')
+                if props.edit_prompt.strip() or props.use_reference_image or has_sp:
+                    col.operator(OP_APPLY_EDIT, text="✨ Apply AI Edit", icon='NONE')
                 else:
                     col.enabled = False
-                    col.operator("nano_banana.apply_edit", text="Enter prompt", icon='INFO')
+                    col.operator(OP_APPLY_EDIT, text="Enter prompt", icon='NONE')
         
         # Render button for inpainting
         if props.use_inpainting:
@@ -351,13 +398,13 @@ class BANANA_PT_image_editor_panel(Panel):
             
             if props.is_editing:
                 col.enabled = False
-                col.operator("nano_banana.apply_edit", text="🔄 Processing...", icon='TIME')
+                col.operator(OP_APPLY_EDIT, text="🔄 Processing...", icon='TIME')
             else:
-                if props.edit_prompt.strip():
-                    col.operator("nano_banana.apply_edit", text="Render", icon='NONE')
+                if props.edit_prompt.strip() or has_sp:
+                    col.operator(OP_APPLY_EDIT, text="Render", icon='NONE')
                 else:
                     col.enabled = False
-                    col.operator("nano_banana.apply_edit", text="Enter prompt first", icon='INFO')
+                    col.operator(OP_APPLY_EDIT, text="Enter prompt first", icon='INFO')
         
         # Quick actions
         layout.separator()
@@ -371,7 +418,7 @@ class BANANA_PT_image_editor_panel(Panel):
         row = layout.row(align=True)
         row.scale_y = 1.2
         row.operator("nano_banana.rerender_image", text="Re-render", icon='FILE_REFRESH')
-        
+
         # Status
         layout.separator()
         box = layout.box()
@@ -386,32 +433,79 @@ class BANANA_PT_image_editor_panel(Panel):
                     toggle=True, icon='TIME')
             
             if props.show_history:
-                box = layout.box()
+                from . import history_previews
                 for i, item in enumerate(reversed(props.edit_history)):
                     actual_index = len(props.edit_history) - 1 - i
+                    edit_number = len(props.edit_history) - i
                     
-                    row = box.row(align=True)
-                    row.scale_y = 0.8
+                    box = layout.box()
                     
-                    # Timestamp and prompt preview
+                    # Header
+                    header = box.row()
+                    header.label(text=f"Edit #{edit_number} \u2022 {item.timestamp}", icon='TIME')
+                    
+                    row = box.row()
+                    # Icon
+                    icon_id = history_previews.get_preview_icon_id_safe(item.filepath, item.image_name)
+                    if icon_id:
+                        row.template_icon(icon_value=icon_id, scale=4.0)
+                    else:
+                        col_icon = row.column()
+                        col_icon.scale_x = 0.5
+                        col_icon.scale_y = 4.0
+                        col_icon.label(text="", icon='IMAGE_DATA')
+                        
                     col = row.column()
-                    col.label(text=f"#{len(props.edit_history) - i} • {item.timestamp}")
+                    
+                    # Prompt preview
                     prompt_prev = item.prompt[:40] + "..." if len(item.prompt) > 40 else item.prompt
                     col.label(text=prompt_prev, icon='TEXT')
                     
-                    # Load button
-                    load_btn = row.operator("nano_banana.load_history_edit", text="", icon='LOOP_BACK')
-                    load_btn.history_index = actual_index
+                    # Actions row
+                    actions = col.row(align=True)
                     
-                    if i < len(props.edit_history) - 1:
-                        box.separator()
+                    is_showing_result = False
+                    if context.space_data and hasattr(context.space_data, 'image') and context.space_data.image:
+                        is_showing_result = (context.space_data.image.name == item.image_name)
+                    
+                    OP_LOAD_HISTORY_EDIT = "nano_banana.load_history_edit"
+
+                    if is_showing_result and item.original_image_name:
+                        load_btn = actions.operator(OP_LOAD_HISTORY_EDIT, text="Show Original", icon='LOOP_BACK')
+                        load_btn.history_index = actual_index
+                        load_btn.load_original = True
+                    else:
+                        load_btn = actions.operator(OP_LOAD_HISTORY_EDIT, text="Restore Edit", icon='IMAGE_DATA')
+                        load_btn.history_index = actual_index
+                        load_btn.load_original = False
+                    
+                    copy_btn = actions.operator("nano_banana.copy_prompt", text="Copy Prompt", icon='COPYDOWN')
+                    copy_btn.prompt_text = item.prompt
 
 
 
 
-class NANO_BANANA_OT_apply_edit(Operator):
+class NanoBananaCopyPrompt(Operator):
+    """Copy a prompt text to clipboard"""
+    bl_idname = "nano_banana.copy_prompt"
+    bl_label = "Copy Prompt"
+    bl_options = {'REGISTER', 'INTERNAL'}
+    
+    prompt_text: StringProperty(default="")
+    
+    def execute(self, context):
+        context.window_manager.clipboard = self.prompt_text
+        self.report({'INFO'}, "Prompt copied to clipboard")
+        return {'FINISHED'}
+
+
+OP_APPLY_EDIT = "nano_banana.apply_edit"
+MSG_NO_IMAGE = "No image in editor"
+
+
+class NanoBananaOTApplyEdit(Operator):
     """Apply AI edit to the current image"""
-    bl_idname = "nano_banana.apply_edit"
+    bl_idname = OP_APPLY_EDIT
     bl_label = "Apply AI Edit"
     bl_options = {'REGISTER'}
     
@@ -421,11 +515,16 @@ class NANO_BANANA_OT_apply_edit(Operator):
         image = sima.image
         
         if not image:
-            self.report({'ERROR'}, "No image in editor")
+            self.report({'ERROR'}, MSG_NO_IMAGE)
             return {'CANCELLED'}
         
+        # Check if smart points provide a prompt
+        has_sp = (hasattr(props, 'use_smart_points') and props.use_smart_points
+                  and hasattr(props, 'smart_points') and len(props.smart_points) > 0
+                  and all(pt.prompt.strip() for pt in props.smart_points))
+        
         # Validate prompt
-        if not props.edit_prompt.strip() and not props.use_reference_image:
+        if not props.edit_prompt.strip() and not props.use_reference_image and not has_sp:
             self.report({'ERROR'}, "Enter edit instructions or select reference image")
             return {'CANCELLED'}
         
@@ -459,7 +558,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
             # SOLUTION: Read raw linear pixel data → apply sRGB gamma manually → save via PIL.
             # This produces a perfectly correct sRGB PNG every time, regardless of
             # Blender's color management settings or the image's internal state.
-            print(f"[NANO BANANA] Exporting image via PIL (sRGB-safe, no view transform)...")
+            print("[NANO BANANA] Exporting image via PIL (sRGB-safe, no view transform)...")
             print(f"[NANO BANANA] Image colorspace: {image.colorspace_settings.name}")
             print(f"[NANO BANANA] Image size: {image.size[0]}x{image.size[1]}")
             
@@ -481,7 +580,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
                 
                 if is_linear:
                     # Image IS linear → apply sRGB gamma curve for PNG output
-                    print(f"[NANO BANANA] Image is linear, applying sRGB gamma...")
+                    print("[NANO BANANA] Image is linear, applying sRGB gamma...")
                     rgb = pixels[:, :, :3]
                     # sRGB gamma: linear → sRGB
                     rgb = np.clip(rgb, 0.0, 1.0)
@@ -492,7 +591,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
                 else:
                     # Image is already sRGB-tagged → pixels are already in sRGB space
                     # Just clamp to valid output range
-                    print(f"[NANO BANANA] Image is sRGB, direct export...")
+                    print("[NANO BANANA] Image is sRGB, direct export...")
                     pixels = np.clip(pixels, 0.0, 1.0)
                 
                 # Convert float [0,1] → uint8 [0,255]
@@ -509,7 +608,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
                 
             except ImportError:
                 # PIL not available — fallback to Blender's save()
-                print(f"[NANO BANANA] PIL not available, falling back to image.save()...")
+                print("[NANO BANANA] PIL not available, falling back to image.save()...")
                 original_filepath = image.filepath_raw
                 original_file_format = image.file_format
                 try:
@@ -591,6 +690,37 @@ class NANO_BANANA_OT_apply_edit(Operator):
                     return {'CANCELLED'}
                 print(f"[NANO BANANA] Extracted inpaint guide: {inpaint_guide_path}")
             
+            # ── Smart Points: build composite & override prompt ──
+            user_prompt = props.edit_prompt
+            api_prompt = props.edit_prompt
+            sp_json_str = ""
+            
+            if has_sp:
+                import json
+                # Create JSON snapshot for history
+                sp_data = [{"x": p.pos_x, "y": p.pos_y, "prompt": p.prompt, "color": list(p.color)} for p in props.smart_points]
+                sp_json_str = json.dumps(sp_data)
+                
+                # Build composite on top of the CURRENT image — the same one
+                # exported as original.png, so markers align with what is sent.
+                composite_path, _ = _sp.build_composite(image, props.smart_points)
+                if composite_path:
+                    # Two-image workflow: original = main image, composite = reference
+                    reference_path = composite_path
+                    sp_prompt = _sp.build_prompt(props.smart_points)
+                    if api_prompt.strip():
+                        api_prompt = f"{sp_prompt}\n\nADDITIONAL INSTRUCTIONS:\n{api_prompt}"
+                    else:
+                        api_prompt = sp_prompt
+                    print("[SMART POINTS] Composite ready as reference, prompt built")
+                else:
+                    props.is_editing = False
+                    self.report({'ERROR'}, "Failed to build Smart Points composite")
+                    return {'CANCELLED'}
+            
+            # Original image is always the main input
+            final_image_path = image_path
+            
             # Map model enum to API model name
             MODEL_MAP = {
                 'NANO_BANANA_2': 'gemini-3.1-flash-image-preview',
@@ -604,21 +734,28 @@ class NANO_BANANA_OT_apply_edit(Operator):
 
             # Start background thread
             thread = image_edit_thread.ImageEditThread(
-                image_path=image_path,
-                edit_prompt=props.edit_prompt,
+                image_path=final_image_path,
+                user_prompt=user_prompt,
+                api_prompt=api_prompt,
                 mask_path=inpaint_guide_path,
                 reference_path=reference_path,
                 api_key=token,
                 context=context,
                 original_image_name=image.name,
                 temp_dir=temp_dir,
-                resolution=props.resolution,
-                original_size=(image.size[0], image.size[1]),
+                smart_points_json=sp_json_str,
+                size_params=(props.resolution, (image.size[0], image.size[1])),
                 model_name=model_name,
+                is_smart_points=has_sp,
             )
             
             thread.start()
             print(f"[NANO BANANA] Edit thread started with model: {model_name}")
+            
+            # Clean up smart points after launching
+            if has_sp:
+                props.smart_points.clear()
+                _sp.remove_draw_handler()
             
             self.report({'INFO'}, "AI edit started in background...")
             
@@ -674,7 +811,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
                     print(f"[NANO BANANA] Inpaint guide saved: {guide_path}")
                     return guide_path
                 else:
-                    print(f"[NANO BANANA] Image needs RGB channels")
+                    print("[NANO BANANA] Image needs RGB channels")
                     return None
                     
             except ImportError as e:
@@ -701,7 +838,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
                         print(f"[NANO BANANA] File saved successfully: {file_size} bytes")
                         return guide_path
                     else:
-                        print(f"[NANO BANANA] File not created!")
+                        print("[NANO BANANA] File not created!")
                         return None
                         
                 finally:
@@ -716,7 +853,7 @@ class NANO_BANANA_OT_apply_edit(Operator):
             return None
 
 
-class NANO_BANANA_OT_finalize_composite(Operator):
+class NanoBananaOTFinalizeComposite(Operator):
     """Finalize composite - unify colors, contrast, lighting across entire image"""
     bl_idname = "nano_banana.finalize_composite"
     bl_label = "Finalize Composite"
@@ -746,7 +883,7 @@ class NANO_BANANA_OT_finalize_composite(Operator):
         return {'FINISHED'}
 
 
-class NANO_BANANA_OT_rerender_image(Operator):
+class NanoBananaOTRerenderImage(Operator):
     """Re-render the image with the same settings (variation)"""
     bl_idname = "nano_banana.rerender_image"
     bl_label = "Re-render Image"
@@ -759,7 +896,7 @@ class NANO_BANANA_OT_rerender_image(Operator):
         image = sima.image
         
         if not image:
-            self.report({'ERROR'}, "No image in editor")
+            self.report({'ERROR'}, MSG_NO_IMAGE)
             return {'CANCELLED'}
         
         # Check if we have history to pull from
@@ -780,7 +917,7 @@ class NANO_BANANA_OT_rerender_image(Operator):
         return {'FINISHED'}
 
 
-class NANO_BANANA_OT_save_version(Operator):
+class NanoBananaOTSaveVersion(Operator):
     """Save current image as a new version"""
     bl_idname = "nano_banana.save_version"
     bl_label = "Save Version"
@@ -791,7 +928,7 @@ class NANO_BANANA_OT_save_version(Operator):
         image = sima.image
         
         if not image:
-            self.report({'ERROR'}, "No image in editor")
+            self.report({'ERROR'}, MSG_NO_IMAGE)
             return {'CANCELLED'}
         
         try:
@@ -807,13 +944,14 @@ class NANO_BANANA_OT_save_version(Operator):
             return {'CANCELLED'}
 
 
-class NANO_BANANA_OT_load_history_edit(Operator):
+class NanoBananaOTLoadHistoryEdit(Operator):
     """Load edit from history"""
     bl_idname = "nano_banana.load_history_edit"
     bl_label = "Load History Edit"
     bl_options = {'REGISTER'}
     
     history_index: IntProperty()
+    load_original: bpy.props.BoolProperty(default=False)
     
     def execute(self, context):
         props = context.window_manager.nano_banana_editor
@@ -827,17 +965,52 @@ class NANO_BANANA_OT_load_history_edit(Operator):
         # Load prompt
         props.edit_prompt = item.prompt
         
-        # Load image if available
-        if item.image_name in bpy.data.images:
-            context.space_data.image = bpy.data.images[item.image_name]
-            self.report({'INFO'}, f"Loaded edit from {item.timestamp}")
+        # Load image
+        target_image_name = item.original_image_name if self.load_original else item.image_name
+        
+        if target_image_name and target_image_name in bpy.data.images:
+            context.space_data.image = bpy.data.images[target_image_name]
+            self.report({'INFO'}, f"Loaded {'Original' if self.load_original else 'Result'} from {item.timestamp}")
         else:
-            self.report({'WARNING'}, f"Image {item.image_name} not found")
+            self.report({'WARNING'}, f"Image {target_image_name} not found in memory")
+            
+        # Load smart points if available
+        props.smart_points.clear()
+        if hasattr(item, 'smart_points_json') and item.smart_points_json:
+            try:
+                import json
+                sp_data = json.loads(item.smart_points_json)
+                if sp_data:
+                    props.use_smart_points = True
+                    for pt_data in sp_data:
+                        pt = props.smart_points.add()
+                        pt.pos_x = pt_data.get("x", 0.5)
+                        pt.pos_y = pt_data.get("y", 0.5)
+                        pt.prompt = pt_data.get("prompt", "")
+                        
+                        col = pt_data.get("color", [1,0,0,1])
+                        if len(col) == 4:
+                            pt.color = col
+                        
+                        # Set number sequentially
+                        pt.number = len(props.smart_points)
+                    
+                    # Ensure draw handler is active if we restored points
+                    if len(props.smart_points) > 0:
+                        from . import smart_points as _sp
+                        _sp.ensure_draw_handler()
+            except Exception as e:
+                print(f"[NANO BANANA] Failed to load smart points from history: {e}")
+        else:
+            # If no smart points in this history, disable the mode
+            props.use_smart_points = False
+            from . import smart_points as _sp
+            _sp.remove_draw_handler()
         
         return {'FINISHED'}
 
 
-class NANO_BANANA_OT_convert_render_result(Operator):
+class NanoBananaOTConvertRenderResult(Operator):
     """Convert Render Result to editable image with correct colors"""
     bl_idname = "nano_banana.convert_render_result"
     bl_label = "Convert Render Result"
@@ -909,7 +1082,7 @@ class NANO_BANANA_OT_convert_render_result(Operator):
             return {'CANCELLED'}
 
 
-class NANO_BANANA_OT_switch_to_paint(Operator):
+class NanoBananaOTSwitchToPaint(Operator):
     """Switch Image Editor to Paint mode"""
     bl_idname = "nano_banana.switch_to_paint"
     bl_label = "Start Paint"
@@ -920,7 +1093,7 @@ class NANO_BANANA_OT_switch_to_paint(Operator):
         sima = context.space_data
         
         if not sima or not sima.image:
-            self.report({'ERROR'}, "No image in editor")
+            self.report({'ERROR'}, MSG_NO_IMAGE)
             return {'CANCELLED'}
         
         image = sima.image
@@ -998,7 +1171,7 @@ class NANO_BANANA_OT_switch_to_paint(Operator):
             return {'CANCELLED'}
 
 
-class NANO_BANANA_OT_apply_inpaint(Operator):
+class NanoBananaOTApplyInpaint(Operator):
     """Apply inpainting - save drawing as new image"""
     bl_idname = "nano_banana.apply_inpaint"
     bl_label = "Apply Drawing"
@@ -1031,9 +1204,7 @@ class NANO_BANANA_OT_apply_inpaint(Operator):
                 if not history_image.packed_file:
                      history_image.pack() 
             except Exception as e:
-                print(f"[NANO BANANA] Warning: Could not pack history image: {e}")
-                # If packing fails (e.g. file missing), we might still be okay if data is in memory
-                pass
+                print("[NANO BANANA] Warning: Could not pack history image: %s" % e)
             
             history_item = props.edit_history.add()
             history_item.prompt = "[Inpaint sketch applied]"
@@ -1041,7 +1212,7 @@ class NANO_BANANA_OT_apply_inpaint(Operator):
             history_item.timestamp = datetime.now().strftime("%H:%M:%S")
             history_item.has_mask = True
             
-            print(f"[NANO BANANA] Saved history backup: {history_image.name}")
+            print("[NANO BANANA] Saved history backup: %s" % history_image.name)
             
             # Create duplicate with drawing
             new_image = current_image.copy()
@@ -1054,7 +1225,7 @@ class NANO_BANANA_OT_apply_inpaint(Operator):
             # Try to pack (skip if fails - not critical)
             try:
                 new_image.pack()
-                print(f"[NANO BANANA] Packed into blend file")
+                print("[NANO BANANA] Packed into blend file")
             except Exception as pack_error:
                 print(f"[NANO BANANA] Pack failed (not critical): {pack_error}")
             
@@ -1077,84 +1248,81 @@ class NANO_BANANA_OT_apply_inpaint(Operator):
             return {'CANCELLED'}
 
 
+def _get_image_editor_area_space(context):
+    """Find and return the active Image Editor area and space."""
+    for area in context.screen.areas:
+        if area.type == 'IMAGE_EDITOR':
+            for space in area.spaces:
+                if space.type == 'IMAGE_EDITOR' and space.image:
+                    return area, space
+    return None, None
+
+def _setup_brush_compatibility(context, paint, brush_size, brush_color):
+    """Setup brush properties with compatibility for Blender 4.x and 5.0."""
+    try:
+        ts = context.tool_settings
+        # Disable unified paint settings
+        ups = getattr(paint, 'unified_paint_settings', None)
+        if ups is None:
+            ups = getattr(ts, 'unified_paint_settings', None)
+        
+        if ups:
+            try:
+                ups.use_unified_size = False
+                ups.use_unified_color = False
+            except Exception:
+                pass
+        
+        brush = paint.brush
+        if not brush:
+            # Blender 5.0: use asset_activate
+            try:
+                bpy.ops.brush.asset_activate(
+                    asset_library_type='ESSENTIALS',
+                    relative_asset_identifier="brushes\\essentials_brushes-texture_paint.blend\\Brush\\Draw"
+                )
+                brush = paint.brush
+            except Exception:
+                # Blender 4.x fallback
+                if 'Draw' in bpy.data.brushes:
+                    paint.brush = bpy.data.brushes['Draw']
+                    brush = paint.brush
+        
+        if brush:
+            brush.size = brush_size
+            brush.color = (brush_color[0], brush_color[1], brush_color[2])
+            brush.strength = 1.0
+            brush.blend = 'MIX'
+            return True
+    except Exception as e:
+        print(f"[NANO BANANA] Brush setup error: {e}")
+    return False
+
 def on_mask_toggle(self, context):
     """Handle mask toggle - switch to Paint mode automatically
     Compatible with Blender 4.x and 5.0+
     """
     try:
-        # Find Image Editor area
-        for area in context.screen.areas:
-            if area.type == 'IMAGE_EDITOR':
-                for space in area.spaces:
-                    if space.type == 'IMAGE_EDITOR':
-                        if not space.image:
-                            return
-                        
-                        if self.use_mask:
-                            # Switch to Paint mode
-                            with context.temp_override(area=area, space_data=space):
-                                space.mode = 'PAINT'
-                                print("[NANO BANANA] Switched to Paint mode")
-                                
-                                # Setup brush in Tool Settings
-                                try:
-                                    ts = context.tool_settings
-                                    paint = ts.image_paint
-                                    
-                                    if paint:
-                                        # Disable unified paint settings
-                                        # Blender 5.0: on Paint struct; 4.x: on tool_settings
-                                        ups = getattr(paint, 'unified_paint_settings', None)
-                                        if ups is None:
-                                            ups = getattr(ts, 'unified_paint_settings', None)
-                                        
-                                        if ups:
-                                            try:
-                                                ups.use_unified_size = False
-                                                ups.use_unified_color = False
-                                            except Exception:
-                                                pass
-                                        
-                                        brush = paint.brush
-                                        if not brush:
-                                            # Blender 5.0: use asset_activate
-                                            try:
-                                                bpy.ops.brush.asset_activate(
-                                                    asset_library_type='ESSENTIALS',
-                                                    relative_asset_identifier="brushes\\essentials_brushes-texture_paint.blend\\Brush\\Draw"
-                                                )
-                                                brush = paint.brush
-                                                print("[NANO BANANA] Activated Draw brush via asset_activate")
-                                            except Exception:
-                                                # Blender 4.x fallback
-                                                try:
-                                                    if 'Draw' in bpy.data.brushes:
-                                                        paint.brush = bpy.data.brushes['Draw']
-                                                        brush = paint.brush
-                                                except Exception:
-                                                    print("[NANO BANANA] No default brush found")
-                                        
-                                        if brush:
-                                            try:
-                                                brush.size = self.brush_size
-                                                brush.color = (self.brush_color[0], self.brush_color[1], self.brush_color[2])
-                                                brush.strength = 1.0
-                                                brush.blend = 'MIX'
-                                                print(f"[NANO BANANA] Brush configured: size={brush.size}, color={brush.color[:]}")
-                                            except Exception as e:
-                                                print(f"[NANO BANANA] Could not set brush properties: {e}")
-                                except Exception as e:
-                                    import traceback
-                                    print(f"[NANO BANANA] Brush setup error: {e}")
-                                    traceback.print_exc()
-                        else:
-                            # Switch to View mode
-                            with context.temp_override(area=area, space_data=space):
-                                space.mode = 'VIEW'
-                                print("[NANO BANANA] Switched to View mode")
-                        
-                        area.tag_redraw()
-                        break
+        area, space = _get_image_editor_area_space(context)
+        if not area or not space:
+            return
+            
+        if self.use_mask:
+            # Switch to Paint mode
+            with context.temp_override(area=area, space_data=space):
+                space.mode = 'PAINT'
+                print("[NANO BANANA] Switched to Paint mode")
+                
+                ts = context.tool_settings
+                if hasattr(ts, 'image_paint'):
+                    _setup_brush_compatibility(context, ts.image_paint, self.brush_size, self.brush_color)
+        else:
+            # Switch to View mode
+            with context.temp_override(area=area, space_data=space):
+                space.mode = 'VIEW'
+                print("[NANO BANANA] Switched to View mode")
+        
+        area.tag_redraw()
                         
     except Exception as e:
         import traceback
@@ -1162,7 +1330,7 @@ def on_mask_toggle(self, context):
         traceback.print_exc()
 
 
-class NANO_BANANA_OT_load_reference_image(Operator):
+class NanoBananaOTLoadReferenceImage(Operator):
     """Load reference image from file without switching Image Editor"""
     bl_idname = "nano_banana.load_reference_image"
     bl_label = "Load Reference Image"
@@ -1206,7 +1374,7 @@ class NANO_BANANA_OT_load_reference_image(Operator):
             return {'CANCELLED'}
 
 
-class NANO_BANANA_OT_unlink_reference_image(Operator):
+class NanoBananaOTUnlinkReferenceImage(Operator):
     """Remove reference image"""
     bl_idname = "nano_banana.unlink_reference_image"
     bl_label = "Remove Reference"
@@ -1228,27 +1396,7 @@ def update_brush_settings(self, context):
         paint = getattr(ts, 'image_paint', None)
         
         if paint:
-            # Blender 5.0: unified_paint_settings is on Paint struct (ts.image_paint)
-            # Blender 4.x: unified_paint_settings is on tool_settings
-            ups = getattr(paint, 'unified_paint_settings', None)
-            if ups is None:
-                ups = getattr(ts, 'unified_paint_settings', None)
-            
-            if ups:
-                try:
-                    ups.use_unified_size = False
-                    ups.use_unified_color = False
-                except Exception:
-                    pass
-            
-            brush = paint.brush
-            if brush:
-                try:
-                    brush.size = self.brush_size
-                    brush.color = (self.brush_color[0], self.brush_color[1], self.brush_color[2])
-                    print(f"[NANO BANANA] Brush updated: size={self.brush_size}, color=({self.brush_color[0]:.2f}, {self.brush_color[1]:.2f}, {self.brush_color[2]:.2f})")
-                except Exception as e:
-                    print(f"[NANO BANANA] Could not set brush properties: {e}")
+            _setup_brush_compatibility(context, paint, self.brush_size, self.brush_color)
         
         # Force UI redraw
         if hasattr(context, 'screen') and context.screen:
@@ -1264,19 +1412,21 @@ def update_brush_settings(self, context):
 
 # Registration classes
 classes = (
+    *_sp.classes,            # SmartPointItem MUST be registered before ImageEditorProperties
     EditHistoryItem,
     ImageEditorProperties,
-    BANANA_PT_image_editor_panel,
-    NANO_BANANA_OT_apply_edit,
-    NANO_BANANA_OT_finalize_composite,
-    NANO_BANANA_OT_convert_render_result,
-    NANO_BANANA_OT_switch_to_paint,
-    NANO_BANANA_OT_apply_inpaint,
-    NANO_BANANA_OT_load_reference_image,
-    NANO_BANANA_OT_unlink_reference_image,
-    NANO_BANANA_OT_rerender_image,
-    NANO_BANANA_OT_save_version,
-    NANO_BANANA_OT_load_history_edit,
+    BananaPTImageEditorPanel,
+    NanoBananaCopyPrompt,
+    NanoBananaOTApplyEdit,
+    NanoBananaOTFinalizeComposite,
+    NanoBananaOTConvertRenderResult,
+    NanoBananaOTSwitchToPaint,
+    NanoBananaOTApplyInpaint,
+    NanoBananaOTLoadReferenceImage,
+    NanoBananaOTUnlinkReferenceImage,
+    NanoBananaOTRerenderImage,
+    NanoBananaOTSaveVersion,
+    NanoBananaOTLoadHistoryEdit,
 )
 
 def register():
@@ -1287,10 +1437,12 @@ def register():
     bpy.types.WindowManager.nano_banana_editor = PointerProperty(type=ImageEditorProperties)
 
 def unregister():
+    # Remove GPU draw handler first
+    _sp.remove_draw_handler()
+
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     
     # Remove properties
     if hasattr(bpy.types.WindowManager, 'nano_banana_editor'):
         del bpy.types.WindowManager.nano_banana_editor
-

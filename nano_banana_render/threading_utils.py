@@ -1,7 +1,7 @@
 import bpy
 import threading
 from queue import Queue
-from typing import Callable, Any
+from typing import Callable, Any, Optional
 import time
 
 class BlenderThreadManager:
@@ -36,7 +36,7 @@ class BlenderThreadManager:
             
         except Exception as e:
             print(f"Error in queue processor: {e}")
-            return 0.1
+            return 0.5
     
     def stop_timer(self) -> None:
         """Stop the timer (call when addon is unregistered)"""
@@ -53,6 +53,64 @@ _thread_manager = BlenderThreadManager()
 def execute_in_main_thread(func: Callable, *args, **kwargs) -> None:
     """Convenience function to execute in main thread"""
     _thread_manager.execute_in_main_thread(func, *args, **kwargs)
+
+def redraw_all_areas():
+    """Force redraw of all areas to update UI."""
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            area.tag_redraw()
+
+def set_image_in_all_editors(image, mode='VIEW'):
+    """Set the given image in all Image Editor spaces.
+    Returns True if at least one editor was updated.
+    """
+    switched = False
+    for window in bpy.context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'IMAGE_EDITOR':
+                for space in area.spaces:
+                    if space.type == 'IMAGE_EDITOR':
+                        space.image = image
+                        if mode:
+                            space.mode = mode
+                        area.tag_redraw()
+                        switched = True
+    return switched
+
+def ensure_image_editor_visible(image):
+    """Ensure an Image Editor is visible showing the given image.
+    Will try to open a new window or repurpose a non-critical area if none found.
+    """
+    # 1. Try existing editors
+    if set_image_in_all_editors(image):
+        return True
+        
+    # 2. Try to open new window
+    try:
+        bpy.ops.wm.window_new()
+        new_window = bpy.context.window_manager.windows[-1]
+        for area in new_window.screen.areas:
+            if area.type != 'IMAGE_EDITOR':
+                area.type = 'IMAGE_EDITOR'
+                for space in area.spaces:
+                    if space.type == 'IMAGE_EDITOR':
+                        space.image = image
+                        area.tag_redraw()
+                        return True
+    except Exception:
+        pass
+        
+    # 3. Last resort: Convert safe area in current window
+    SAFE_AREAS = ['TEXT_EDITOR', 'CONSOLE', 'INFO', 'FILE_BROWSER']
+    for area in bpy.context.screen.areas:
+        if area.type in SAFE_AREAS:
+            area.type = 'IMAGE_EDITOR'
+            for space in area.spaces:
+                if space.type == 'IMAGE_EDITOR':
+                    space.image = image
+                    area.tag_redraw()
+                    return True
+    return False
 
 def update_render_status(scene, status_text: str, is_rendering: bool = None) -> None:
     """Update render status in UI (thread-safe)."""
@@ -74,7 +132,65 @@ def update_render_status(scene, status_text: str, is_rendering: bool = None) -> 
     
     execute_in_main_thread(_update)
 
-def save_reference_image_temp(scene) -> str:
+
+def _save_from_pixels(reference_image, temp_path) -> bool:
+    try:
+        pixels = list(reference_image.pixels)
+        width, height = reference_image.size
+        try:
+            from PIL import Image
+            import numpy as np
+            pixel_array = np.array(pixels).reshape((height, width, reference_image.channels))
+            if pixel_array.max() <= 1.0:
+                pixel_array = (pixel_array * 255).astype(np.uint8)
+            
+            if reference_image.channels == 4:
+                img = Image.fromarray(pixel_array, 'RGBA')
+            elif reference_image.channels == 3:
+                img = Image.fromarray(pixel_array, 'RGB')
+            else:
+                img = Image.fromarray(pixel_array[:,:,0], 'L')
+            img.save(temp_path, 'PNG')
+            return True
+        except ImportError:
+            print("[GEMINI] PIL not available, trying Blender save_render...")
+            original_settings = {
+                'filepath': reference_image.filepath,
+                'file_format': reference_image.file_format
+            }
+            reference_image.filepath_raw = temp_path
+            reference_image.file_format = 'PNG'
+            reference_image.save_render(temp_path)
+            reference_image.filepath = original_settings['filepath']
+            reference_image.file_format = original_settings['file_format']
+            return True
+    except Exception as e:
+        print(f"[GEMINI] Pixel data method failed: {e}")
+        return False
+
+def _save_from_packed(reference_image, temp_path) -> bool:
+    try:
+        with open(temp_path, 'wb') as f:
+            f.write(reference_image.packed_file.data)
+        return True
+    except Exception as e:
+        print(f"[GEMINI] Packed file method failed: {e}")
+        return False
+
+def _save_from_filepath(reference_image, temp_path) -> bool:
+    import os
+    import shutil
+    import bpy
+    try:
+        abs_path = bpy.path.abspath(reference_image.filepath)
+        if os.path.exists(abs_path):
+            shutil.copy2(abs_path, temp_path)
+            return True
+    except Exception as e:
+        print(f"[GEMINI] Filepath method failed: {e}")
+    return False
+
+def save_reference_image_temp(scene) -> Optional[str]:
     """Save reference image from scene properties to temporary file."""
     try:
         import tempfile
@@ -93,78 +209,12 @@ def save_reference_image_temp(scene) -> str:
         # Save image using different methods based on image type
         saved_successfully = False
         
-        # Method 1: For images without filepath - use pixel data
         if not reference_image.filepath:
-            try:
-                # Get pixel data directly
-                pixels = list(reference_image.pixels)
-                width, height = reference_image.size
-                
-                # Convert to PIL Image and save
-                try:
-                    # Try to use PIL if available
-                    from PIL import Image
-                    try:
-                        import numpy as np
-                    except ImportError:
-                        raise ImportError("NumPy required for PIL image processing")
-                    
-                    # Convert pixels to numpy array and reshape
-                    pixel_array = np.array(pixels).reshape((height, width, reference_image.channels))
-                    
-                    # Convert to 0-255 range and uint8
-                    if pixel_array.max() <= 1.0:
-                        pixel_array = (pixel_array * 255).astype(np.uint8)
-                    
-                    # Handle different channel counts
-                    if reference_image.channels == 4:  # RGBA
-                        img = Image.fromarray(pixel_array, 'RGBA')
-                    elif reference_image.channels == 3:  # RGB
-                        img = Image.fromarray(pixel_array, 'RGB')
-                    else:  # Grayscale
-                        img = Image.fromarray(pixel_array[:,:,0], 'L')
-                    
-                    img.save(temp_path, 'PNG')
-                    saved_successfully = True
-                    
-                except ImportError:
-                    print("[GEMINI] PIL not available, trying Blender save_render...")
-                    # Fallback to Blender's save_render
-                    original_settings = {
-                        'filepath': reference_image.filepath,
-                        'file_format': reference_image.file_format
-                    }
-                    
-                    reference_image.filepath_raw = temp_path
-                    reference_image.file_format = 'PNG'
-                    reference_image.save_render(temp_path)
-                    
-                    reference_image.filepath = original_settings['filepath']
-                    reference_image.file_format = original_settings['file_format']
-                    saved_successfully = True
-                    
-            except Exception as e:
-                print(f"[GEMINI] Pixel data method failed: {e}")
-        
-        # Method 2: For packed images
+            saved_successfully = _save_from_pixels(reference_image, temp_path)
         elif reference_image.packed_file:
-            try:
-                with open(temp_path, 'wb') as f:
-                    f.write(reference_image.packed_file.data)
-                saved_successfully = True
-            except Exception as e:
-                print(f"[GEMINI] Packed file method failed: {e}")
-        
-        # Method 3: For images with filepath
+            saved_successfully = _save_from_packed(reference_image, temp_path)
         elif reference_image.filepath:
-            try:
-                import shutil
-                abs_path = bpy.path.abspath(reference_image.filepath)
-                if os.path.exists(abs_path):
-                    shutil.copy2(abs_path, temp_path)
-                    saved_successfully = True
-            except Exception as e:
-                print(f"[GEMINI] Filepath method failed: {e}")
+            saved_successfully = _save_from_filepath(reference_image, temp_path)
         
         # Check if saving was successful
         if saved_successfully and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
@@ -249,55 +299,8 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                 except Exception:
                     pass
                 
-                # Update Image Editors
-                for area in bpy.context.screen.areas:
-                    if area.type == 'IMAGE_EDITOR':
-                        for space in area.spaces:
-                            if space.type == 'IMAGE_EDITOR':
-                                space.image = render_result
-                        area.tag_redraw()
-                
-                for area in bpy.context.screen.areas:
-                    area.tag_redraw()
-                
-                # Try different methods to show the result
-                try:
-                    try:
-                        bpy.ops.wm.window_new()
-                        new_window = bpy.context.window_manager.windows[-1]
-                        for area in new_window.screen.areas:
-                            if area.type != 'IMAGE_EDITOR':
-                                area.type = 'IMAGE_EDITOR'
-                                for space in area.spaces:
-                                    if space.type == 'IMAGE_EDITOR':
-                                        space.image = render_result
-                                        area.tag_redraw()
-                                        break
-                                break
-                    except Exception:
-                        try:
-                            bpy.ops.screen.area_dupli('INVOKE_DEFAULT')
-                            for area in bpy.context.screen.areas:
-                                if area.type == 'EMPTY':
-                                    area.type = 'IMAGE_EDITOR'
-                                    for space in area.spaces:
-                                        if space.type == 'IMAGE_EDITOR':
-                                            space.image = render_result
-                                            area.tag_redraw()
-                                            break
-                                    break
-                        except Exception:
-                            # Use existing Image Editor
-                            for area in bpy.context.screen.areas:
-                                if area.type == 'IMAGE_EDITOR':
-                                    for space in area.spaces:
-                                        if space.type == 'IMAGE_EDITOR':
-                                            space.image = render_result
-                                            area.tag_redraw()
-                                            break
-                                    break
-                except Exception:
-                    pass  # Result still available in Blender images
+                # Update Image Editors and ensure one is visible
+                ensure_image_editor_visible(render_result)
                 
                 # Add to render history
                 if user_prompt and permanent_image_for_history:
@@ -311,6 +314,8 @@ def load_result_image(image_data: bytes, image_name: str = "AI_Result", user_pro
                             history_item = props.render_history.add()
                             history_item.prompt = user_prompt
                             history_item.image_name = permanent_image_for_history.name
+                            if hasattr(history_item, 'filepath'):
+                                history_item.filepath = permanent_path
                             
                             # Save style reference info if used
                             if props.use_style_reference and props.style_reference_image:
@@ -369,6 +374,47 @@ class APIThread(threading.Thread):
         print("[GEMINI] Stop requested for APIThread")
         self._stop_event.set()
     
+
+    def _execute_depth_render(self, props):
+        render_result = None
+        depth_path = None
+        mist_start = props.mist_start if props else 5.0
+        mist_depth = props.mist_depth if props else 25.0
+        mist_falloff = getattr(props, 'mist_falloff', 'LINEAR')
+        
+        def _do_safe_mist_render():
+            nonlocal render_result, depth_path
+            try:
+                depth_path = self.depth_renderer.render_depth_map_mist(
+                    self.scene, mist_start, mist_depth, mist_falloff
+                )
+                render_result = "success"
+                print(f"[GEMINI] Mist depth render completed: {depth_path}")
+            except Exception as e:
+                render_result = f"error: {str(e)}"
+                print(f"[GEMINI] Mist render error: {str(e)}")
+                
+        print("[GEMINI] Executing mist render in main thread for safety...")
+        execute_in_main_thread(_do_safe_mist_render)
+        return render_result, depth_path
+
+    def _execute_eevee_render(self):
+        render_result = None
+        depth_path = None
+        def _do_safe_eevee_render():
+            nonlocal render_result, depth_path
+            try:
+                depth_path = self.depth_renderer.render_regular_eevee(self.scene)
+                render_result = "success"
+                print(f"[GEMINI] Regular Eevee render completed: {depth_path}")
+            except Exception as e:
+                render_result = f"error: {str(e)}"
+                print(f"[GEMINI] Regular render error: {str(e)}")
+                
+        print("[GEMINI] Executing Eevee render in main thread for safety...")
+        execute_in_main_thread(_do_safe_eevee_render)
+        return render_result, depth_path
+
     def run(self):
         """Main thread execution - API calls only"""
         print("🚀 [GEMINI] APIThread starting execution...")
@@ -399,7 +445,7 @@ class APIThread(threading.Thread):
             print(f"[GEMINI] Using resolution: {width}x{height} (aspect from scene: {render.resolution_x}x{render.resolution_y})")
             
             try:
-                image_data, mime_type = self.api_client.generate_image(self.depth_path, self.user_prompt, reference_path, width=width, height=height)
+                image_data, _ = self.api_client.generate_image(self.depth_path, self.user_prompt, reference_path, width=width, height=height)
                 print(f"[GEMINI] AI response received, image size: {len(image_data)} bytes")
             finally:
                 # Clean up reference temp file
@@ -407,7 +453,7 @@ class APIThread(threading.Thread):
                     try:
                         import os
                         os.unlink(reference_path)
-                        print(f"[GEMINI] Reference temp file cleaned up")
+                        print("[GEMINI] Reference temp file cleaned up")
                     except OSError:
                         pass
             
@@ -548,12 +594,12 @@ class FullRenderThread(threading.Thread):
                 return
             
             if render_result is None:
-                raise Exception("Mist render timeout - took longer than 3 minutes")
+                raise RuntimeError("Mist render timeout - took longer than 3 minutes")
             elif render_result.startswith("error:"):
-                raise Exception(f"Mist render failed: {render_result[7:]}")
+                raise RuntimeError(f"Mist render failed: {render_result[7:]}")
             
             if not depth_path:
-                raise Exception("No depth path returned from mist render")
+                raise RuntimeError("No depth path returned from mist render")
             
             # Continue with AI processing
             print("[GEMINI] Step 2: Sending to Gemini AI...")
@@ -576,7 +622,7 @@ class FullRenderThread(threading.Thread):
             print(f"[GEMINI] Using resolution: {width}x{height} (aspect from scene: {render.resolution_x}x{render.resolution_y})")
             
             try:
-                image_data, mime_type = self.api_client.generate_image(depth_path, self.user_prompt, reference_path, is_color_render, width=width, height=height)
+                image_data, _ = self.api_client.generate_image(depth_path, self.user_prompt, reference_path, is_color_render, width=width, height=height)
                 print(f"[GEMINI] AI response received, image size: {len(image_data)} bytes")
             finally:
                 # Clean up reference temp file
@@ -584,7 +630,7 @@ class FullRenderThread(threading.Thread):
                     try:
                         import os
                         os.unlink(reference_path)
-                        print(f"[GEMINI] Reference temp file cleaned up")
+                        print("[GEMINI] Reference temp file cleaned up")
                     except OSError:
                         pass
                         
@@ -700,7 +746,7 @@ class FullRenderThread(threading.Thread):
                     break
             
             if not actual_path:
-                raise Exception("Depth render file not found")
+                raise RuntimeError("Depth render file not found")
             
             # Normalize depth map
             normalized_path = self.depth_renderer._normalize_depth_map(

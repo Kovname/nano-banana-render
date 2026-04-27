@@ -258,7 +258,7 @@ class DepthRenderer:
         return None
     
 
-    def _render_viewport_mist(self, scene, temp_dir: str, render_engine: str, mist_falloff: str = 'LINEAR') -> str:
+    def _render_viewport_mist(self, scene, temp_dir: str, _render_engine: str, _mist_falloff: str = 'LINEAR') -> str:
         """Render VIEWPORT with mist shading from camera - accurate depth like in viewport"""
         try:
             import bpy
@@ -408,7 +408,7 @@ class DepthRenderer:
                     result = bpy.ops.render.opengl(write_still=True)
                     print(f"[GEMINI] OpenGL mist render result: {result}")
                 
-                print(f"[GEMINI] Viewport mist render completed")
+                print("[GEMINI] Viewport mist render completed")
                 
                 # Find output file
                 if os.path.exists(mist_output_path):
@@ -533,7 +533,7 @@ class DepthRenderer:
                         # Use current samples or ensure minimum quality
                         if scene.cycles.samples < 64:
                             scene.cycles.samples = 64
-                            print(f"[GEMINI] Increased Cycles samples to 64 for quality")
+                            print("[GEMINI] Increased Cycles samples to 64 for quality")
                 elif scene.render.engine in ['BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE']:
                     print(f"[GEMINI] Using {scene.render.engine} (current engine)")
                     # Ensure good quality for Eevee
@@ -541,7 +541,7 @@ class DepthRenderer:
                         original_samples = scene.eevee.taa_render_samples
                         if scene.eevee.taa_render_samples < 64:
                             scene.eevee.taa_render_samples = 64
-                            print(f"[GEMINI] Increased Eevee samples to 64 for quality")
+                            print("[GEMINI] Increased Eevee samples to 64 for quality")
                 else:
                     # Switch to available Eevee engine
                     scene.render.engine = available_eevee
@@ -552,7 +552,7 @@ class DepthRenderer:
                         original_samples = scene.eevee.taa_render_samples
                         if scene.eevee.taa_render_samples < 64:
                             scene.eevee.taa_render_samples = 64
-                            print(f"[GEMINI] Set Eevee samples to 64 for quality")
+                            print("[GEMINI] Set Eevee samples to 64 for quality")
                 
                 # Configure render output for viewport-like rendering (RGB, no alpha)
                 scene.render.filepath = render_path
