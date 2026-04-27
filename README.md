@@ -13,9 +13,10 @@ Nano Banana integrates seamlessly into Blender as a **standalone render engine**
 </p>
 
 [![Version](https://img.shields.io/badge/Version-2.7.0-brightgreen.svg?logo=github&logoColor=white)](https://github.com/kovname/nano-banana-render/releases)
-[![Blender](https://img.shields.io/badge/Blender-4.5%2B%7C5.0%2B-orange?logo=blender)](https://www.blender.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Blender](https://img.shields.io/badge/Blender-5.0%2B-orange?logo=blender)](https://www.blender.org/)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/kovname/nano-banana-render/total?color=brightgreen)](https://github.com/kovname/nano-banana-render/releases)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=Kovname_nanode-sonar&metric=alert_status&token=bbec1a2b4177985dbd753faf1a6842374434f5d4)](https://sonarcloud.io/summary/new_code?id=Kovname_nanode-sonar)
 
 ---
 
